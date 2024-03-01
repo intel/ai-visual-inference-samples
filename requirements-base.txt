@@ -1,0 +1,8 @@
+pybind11
+cmake
+tqdm
+requests
+av
+numpy
+pytest
+expecttest

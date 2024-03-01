@@ -1,0 +1,7 @@
+-r requirements-base.txt
+
+# IPEX
+-f https://developer.intel.com/ipex-whl-stable-xpu
+torch==2.1.0a0+cxx11.abi
+intel_extension_for_pytorch==2.1.10+xpu
+torchvision==0.16.0a0+cxx11.abi

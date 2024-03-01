@@ -1,0 +1,30 @@
+[tool.black]
+verbose = true
+line-length = 100
+force-exclude = '(.models\/.*py)'
+
+[tool.bandit]
+exclude_dirs = ["tests", "models/BasicVSR.py"]
+
+[build-system]
+requires = [
+    "setuptools",
+    "wheel",
+    "cmake>=3.18",
+    "pybind11"
+]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+log_file = "./.pytest_output/pytest.log"
+log_file_level = "DEBUG"
+log_file_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
+log_file_date_format = "%Y-%m-%d %H:%M:%S"

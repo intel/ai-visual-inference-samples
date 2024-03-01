@@ -1,0 +1,17 @@
+.vscode
+.idea
+build
+__pycache__
+*.so
+*.dylib
+*~
+
+# direnv
+.direnv
+.envrc
+
+## Pytest output folder
+.pytest_output/
+
+## Datasets folders during sample execution
+src/python/intel_visual_ai/dataset/

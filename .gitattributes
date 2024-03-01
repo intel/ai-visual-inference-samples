@@ -1,0 +1,20 @@
+*.pkl binary
+# Jupyter notebook
+# For text count
+# *.ipynb text
+# To ignore it use below
+*.ipynb linguist-documentation
+
+* text=auto
+*.c text
+*.cpp text
+*.h text
+*.sh text eol=lf
+*.py text eol=lf
+*.mp4 filter=lfs diff=lfs merge=lfs -text
+*.bin filter=lfs diff=lfs merge=lfs -text
+*.pb filter=lfs diff=lfs merge=lfs -text
+*.avc filter=lfs diff=lfs merge=lfs -text
+*.h264 filter=lfs diff=lfs merge=lfs -text
+*.hevc filter=lfs diff=lfs merge=lfs -text
+*.h265 filter=lfs diff=lfs merge=lfs -text
