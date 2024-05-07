@@ -1,18 +1,22 @@
 from .videoreader import VideoReader
 from .videowriter import VideoWriter, CpuVideoWriter, VaapiVideoWriter
-from .imageoverlay import ImageOverlay
 from .data_loader import MediaDataLoader
-from intel_visual_ai.libvisual_ai.videoreader import XpuMemoryFormat
 
 try:
-    from .model_loader import ModelLoader
-    from .torchvision_videoreader import (
-        VideoReaderWithLoopMode as TorchvisionVideoReaderWithLoopMode,
-    )
+    from intel_visual_ai.libvisual_ai import XpuMemoryFormat
+    from intel_visual_ai.libvisual_ai.transform import FrameTransform
 except ImportError as err:
-    print(
-        f"ImportError: Most likely torchvision or intel_extension_for_pytorch is not available, CPU-based video reader won't be available. Details: {err}"
-    )
+    pass
+
+try:
+    from .imageoverlay import ImageOverlay
+except ImportError as err:
+    pass
+
+try:
+    import intel_extension_for_pytorch as ipex
+except ImportError:
+    pass
 
 # This property to be aligned with https://pytorch.org/vision/main/_modules/torchvision.html
 _video_backend = "xpu"

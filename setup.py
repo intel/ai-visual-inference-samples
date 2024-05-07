@@ -4,6 +4,7 @@ from setuptools.command.build_ext import build_ext
 import shutil
 import glob
 import os
+from pathlib import Path
 import sys
 
 
@@ -24,8 +25,11 @@ class CMakeBuild(build_ext):
         super().run()
 
     def build_cmake(self, ext):
-        extdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
         os.makedirs(self.build_temp, exist_ok=True)
+        # Target output file is not equal to self.get_ext_fullpath during BuldPy in editable mode
+        target_output_file = Path(self.build_lib) / self.get_ext_filename(
+            self.get_ext_fullname(ext.name)
+        )
 
         cfg = "Debug" if self.debug else "Release"
         cmake_cmd = [
@@ -34,7 +38,7 @@ class CMakeBuild(build_ext):
             ext.sourcedir,
             "-B",
             self.build_temp,
-            "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=" + extdir,
+            "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=" + str(target_output_file.parent.resolve()),
             "-DCMAKE_BUILD_TYPE=" + cfg,
         ]
 
@@ -47,20 +51,13 @@ class CMakeBuild(build_ext):
         self.announce(f"Building project", level=2)
         self.spawn(["cmake", "--build", self.build_temp, "--config", cfg])
 
-        # Directory where the shared library will be copied
-        lib_dest_directory = "src/python/intel_visual_ai"
-        os.makedirs(lib_dest_directory, exist_ok=True)
-
         # Path to the built shared library
-        built_lib_path = os.path.join(self.build_temp, "lib/libvisual_ai.so")
-
-        if not os.path.isfile(built_lib_path):
+        built_lib_path = target_output_file.parent / "libvisual_ai.so"
+        if not built_lib_path.exists():
             raise FileNotFoundError(
                 "libvisual_ai.so not found. Please ensure it is built correctly."
             )
-
-        self.copy_file(built_lib_path, lib_dest_directory)
-        self.announce(f"Copied libvisual_ai.so to {lib_dest_directory}")
+        self.copy_file(built_lib_path, target_output_file)
 
 
 class CustomEggInfo(egg_info):
@@ -97,15 +94,13 @@ class CleanCommand(Command):
 
 setup(
     name="intel_visual_ai",
-    version="0.5.0",
+    version="0.6.0",
     package_dir={"": "src/python"},
     packages=find_packages("src/python"),
-    ext_modules=[CMakeExtension("intel_visual_ai")],
+    ext_modules=[CMakeExtension("intel_visual_ai.libvisual_ai")],
     install_requires=["cmake"],
     cmdclass={
         "build_ext": CMakeBuild,
-        "egg_info": CustomEggInfo,
         "clean": CleanCommand,
     },
-    package_data={"intel_visual_ai": ["libvisual_ai.so"]},
 )

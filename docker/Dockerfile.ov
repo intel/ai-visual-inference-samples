@@ -1,0 +1,105 @@
+FROM ubuntu:22.04 as ffmpeg_build
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --fix-missing \
+    ca-certificates curl build-essential gpg-agent software-properties-common yasm unzip wget pkg-config
+
+# Add Intel® Graphics APT repository
+ARG INTEL_GFX_KEY_URL=https://repositories.intel.com/graphics/intel-graphics.key
+ARG INTEL_GFX_APT_REPO="deb https://repositories.intel.com/gpu/ubuntu jammy unified"
+
+RUN repo="$INTEL_GFX_APT_REPO" && \
+    if [ -n "$INTEL_GFX_KEY_URL" ]; then \
+    key=/usr/share/keyrings/intel-graphics.gpg && \
+    curl -fsSL $INTEL_GFX_KEY_URL | gpg --dearmor --output $key && \
+    repo=${repo//deb /deb [signed-by=$key] }; \
+    fi && \
+    echo "$repo" > /etc/apt/sources.list.d/intel-gpu-jammy.list
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --fix-missing \
+    libdrm-dev libva-dev
+
+WORKDIR /build
+ARG FFMPEG_VER=n6.1
+RUN curl -GOLf "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/${FFMPEG_VER}.zip" && \
+    unzip -q "${FFMPEG_VER}.zip" && \
+    rm "${FFMPEG_VER}.zip" && \
+    mv ./* ffmpeg
+
+WORKDIR /build/ffmpeg/
+
+RUN ./configure --enable-shared --enable-vaapi --enable-pic && \
+    make "-j$(nproc)" && \
+    make install DESTDIR=/build/ffmpeg/ffmpeg-install
+
+FROM openvino/ubuntu22_runtime:2024.0.0 as ov_prepare
+USER root
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --fix-missing \
+    ca-certificates tzdata curl g++ gcc libc6-dev cmake make python3-dev nano git git-lfs gpg-agent software-properties-common libopencv-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Add Intel® Graphics APT repository
+ARG INTEL_GFX_KEY_URL=https://repositories.intel.com/graphics/intel-graphics.key
+ARG INTEL_GFX_APT_REPO="deb https://repositories.intel.com/gpu/ubuntu jammy unified"
+
+RUN repo="$INTEL_GFX_APT_REPO" && \
+    if [ -n "$INTEL_GFX_KEY_URL" ]; then \
+    key=/usr/share/keyrings/intel-graphics.gpg && \
+    curl -fsSL $INTEL_GFX_KEY_URL | gpg --dearmor --output $key && \
+    repo=${repo//deb /deb [signed-by=$key] }; \
+    fi && \
+    echo "$repo" > /etc/apt/sources.list.d/intel-gpu-jammy.list
+
+## Install Media packages and ffmpeg
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --fix-missing \
+    intel-opencl-icd \
+    intel-level-zero-gpu \
+    level-zero \
+    level-zero-dev \
+    intel-media-va-driver-non-free \
+    va-driver-all vainfo hwinfo clinfo libdrm-dev libva-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# So hadolint is happy
+USER openvino
+
+
+
+FROM ov_prepare as final
+USER root
+COPY --from=ffmpeg_build /build/ffmpeg/ffmpeg-install /
+COPY ./third-party-programs.txt /opt/intel/ai-visual-inference-samples/
+
+RUN ldconfig
+USER openvino
+ARG MADIR=/home/openvino/ma
+RUN mkdir -p "$MADIR/install"
+WORKDIR $MADIR/install
+
+COPY --chown=openvino:openvino ./requirements-base.txt ./
+COPY --chown=openvino:openvino ./requirements-ov.txt ./
+
+# Build VideoReader
+RUN pip install --no-cache-dir -r ./requirements-ov.txt
+
+COPY --chown=openvino:openvino ./setup.py ./
+COPY --chown=openvino:openvino ./src ./src
+COPY --chown=openvino:openvino ./external ./external
+
+RUN pip install --no-cache-dir .
+
+WORKDIR $MADIR
+COPY --chown=openvino:openvino ./data ./data
+COPY --chown=openvino:openvino ./samples ./samples
+
+# Clean up and rights
+RUN rm -rf $MADIR/install

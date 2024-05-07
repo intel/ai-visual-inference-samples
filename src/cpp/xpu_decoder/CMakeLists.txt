@@ -25,6 +25,7 @@ PRIVATE
 target_link_libraries(${TARGET_NAME}
 PUBLIC
     pybind11::module
+    visual_ai_include
 PRIVATE
     ${Python_LIBRARIES}
     PkgConfig::LIBAV

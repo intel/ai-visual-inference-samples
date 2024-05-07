@@ -1,3 +1,6 @@
+#!/bin/bash
+
+
 # List of supported metrics
 METRICS="0,1,2,3,4,5,14,17,22,24,25,26,27,33,35"
 
@@ -32,4 +35,3 @@ else
         exit 1;
 fi
 exit 0;
-

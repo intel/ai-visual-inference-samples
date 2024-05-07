@@ -2,19 +2,18 @@
 #include "vaapi_frame.hpp"
 #include <iostream>
 
-VASurfaceID create_va_surface(VaDpyWrapper display, uint32_t width, uint32_t height,
-                              int pixel_format, int rt_format) {
+VASurfaceID create_va_surface(VADisplay display, uint32_t width, uint32_t height, int pixel_format,
+                              int rt_format) {
     VASurfaceAttrib surface_attrib;
     surface_attrib.type = VASurfaceAttribPixelFormat;
     surface_attrib.flags = VA_SURFACE_ATTRIB_SETTABLE;
     surface_attrib.value.type = VAGenericValueTypeInteger;
     surface_attrib.value.value.i = pixel_format;
-
     VASurfaceID va_surface_id;
-    auto status = display.drvVtable().vaCreateSurfaces2(display.drvCtx(), rt_format, width, height,
-                                                        &va_surface_id, 1, &surface_attrib, 1);
+    auto status =
+        vaCreateSurfaces(display, rt_format, width, height, &va_surface_id, 1, &surface_attrib, 1);
     if (status != VA_STATUS_SUCCESS)
-        throw std::runtime_error("vaCreateSurfaces2 failed, " + std::to_string(status));
+        throw std::runtime_error("vaCreateSurfaces failed, " + std::to_string(status));
 
     return va_surface_id;
 }
@@ -34,12 +33,25 @@ int get_va_rt_format_for_fourcc(int _pixel_format) {
     }
 }
 
-VaApiFrame::VaApiFrame(void* va_display, uint32_t va_surface_id, uint32_t width, uint32_t height,
-                       int format, bool owns /*= false*/)
+uint32_t get_supported_va_copy_mode(VADisplay display) {
+    // VA_EXEC_MODE_POWER_SAVING to use "Copy Engine" instead of "Compute Engine" as it gives perf
+    // boost in Media + Compute workloads. Note not every platform supports this copy mode so we
+    // need to query its capabilities
+    VADisplayAttribute attr = {.type = VADisplayAttribCopy};
+    VAStatus va_status = vaGetDisplayAttributes(display, &attr, 1);
+    if (va_status != VA_STATUS_SUCCESS)
+        throw std::runtime_error("Failed to get device VADisplayAttribCopy attribute: " +
+                                 std::to_string(va_status));
+    if (attr.value == 0)
+        throw std::runtime_error("vaCopy is not supported on current platform");
+    return (attr.value & (1 << VA_EXEC_MODE_POWER_SAVING)) ? VA_EXEC_MODE_POWER_SAVING
+                                                           : VA_EXEC_MODE_DEFAULT;
+}
+
+VaApiFrame::VaApiFrame(VADisplay va_display, uint32_t va_surface_id, uint32_t width,
+                       uint32_t height, int format, bool owns /*= false*/)
     : owns_surface(owns) {
     // Test that display is valid
-    auto dpy = VaDpyWrapper::fromHandle(va_display);
-
     desc.va_display = va_display;
     desc.va_surface_id = va_surface_id;
     desc.format = format;
@@ -47,16 +59,14 @@ VaApiFrame::VaApiFrame(void* va_display, uint32_t va_surface_id, uint32_t width,
     desc.height = height;
 }
 
-VaApiFrame::VaApiFrame(void* va_display, uint32_t va_surface_id, bool owns /*= false*/)
+VaApiFrame::VaApiFrame(VADisplay va_display, uint32_t va_surface_id, bool owns /*= false*/)
     : owns_surface(owns) {
     // Test that display is valid
-    auto dpy = VaDpyWrapper::fromHandle(va_display);
-
     desc.va_display = va_display;
     desc.va_surface_id = va_surface_id;
 
     VAImage vaimage;
-    auto status = dpy.drvVtable().vaDeriveImage(dpy.drvCtx(), va_surface_id, &vaimage);
+    auto status = vaDeriveImage(va_display, va_surface_id, &vaimage);
     if (status != VA_STATUS_SUCCESS)
         throw std::runtime_error("vaDeriveImage() failed: " + std::to_string(status));
     if (vaimage.width == 0 || vaimage.height == 0) {
@@ -69,30 +79,30 @@ VaApiFrame::VaApiFrame(void* va_display, uint32_t va_surface_id, bool owns /*= f
     desc.height = vaimage.height;
     desc.size = vaimage.data_size;
 
-    status = dpy.drvVtable().vaDestroyImage(dpy.drvCtx(), vaimage.image_id);
+    status = vaDestroyImage(va_display, vaimage.image_id);
     if (status != VA_STATUS_SUCCESS)
         throw std::runtime_error("vaDestroyImage() failed: " + std::to_string(status));
 }
 
-VaApiFrame::VaApiFrame(void* va_display, uint32_t width, uint32_t height, int format)
+VaApiFrame::VaApiFrame(VADisplay va_display, uint32_t width, uint32_t height, int format)
     : owns_surface(true) {
-    auto dpy = VaDpyWrapper::fromHandle(va_display);
     desc.width = width;
     desc.height = height;
     desc.format = format;
     desc.va_display = va_display;
     const int rt_format = get_va_rt_format_for_fourcc(desc.format);
-    desc.va_surface_id = create_va_surface(dpy, desc.width, desc.height, desc.format, rt_format);
+    desc.va_surface_id =
+        create_va_surface(va_display, desc.width, desc.height, desc.format, rt_format);
 }
 
 std::unique_ptr<VaApiFrame> VaApiFrame::copy_from(const VaApiFrame& other) {
-    auto dpy = VaDpyWrapper::fromHandle(other.desc.va_display);
     auto nv12_copy = std::make_unique<VaApiFrame>();
     nv12_copy->desc = other.desc;
     const int rt_format = get_va_rt_format_for_fourcc(nv12_copy->desc.format);
 
-    nv12_copy->desc.va_surface_id = create_va_surface(
-        dpy, nv12_copy->desc.width, nv12_copy->desc.height, nv12_copy->desc.format, rt_format);
+    nv12_copy->desc.va_surface_id =
+        create_va_surface(other.desc.va_display, nv12_copy->desc.width, nv12_copy->desc.height,
+                          nv12_copy->desc.format, rt_format);
 
     VACopyObject dest_obj = {};
     dest_obj.obj_type = VACopyObjectSurface;
@@ -107,11 +117,9 @@ std::unique_ptr<VaApiFrame> VaApiFrame::copy_from(const VaApiFrame& other) {
 
     VACopyOption va_copy_option = {};
     va_copy_option.bits.va_copy_sync = VA_EXEC_ASYNC;
-    // VA_EXEC_MODE_POWER_SAVING to use "Copy Engine" instead of "Compute Engine" as it gives perf
-    // boost in Media + Compute workloads.
-    va_copy_option.bits.va_copy_mode = VA_EXEC_MODE_POWER_SAVING;
-
-    VAStatus va_status = dpy.drvVtable().vaCopy(dpy.drvCtx(), &dest_obj, &src_obj, va_copy_option);
+    static uint32_t supported_va_copy_mode = get_supported_va_copy_mode(other.desc.va_display);
+    va_copy_option.bits.va_copy_mode = supported_va_copy_mode;
+    auto va_status = vaCopy(other.desc.va_display, &dest_obj, &src_obj, va_copy_option);
     if (va_status != VA_STATUS_SUCCESS)
         throw std::runtime_error("Failed to copy VaApiFrame frame with status: " +
                                  std::to_string(va_status));
@@ -125,12 +133,31 @@ VaApiFrame::~VaApiFrame() {
         return;
 
     try {
-        auto dpy = VaDpyWrapper::fromHandle(desc.va_display);
-        auto status = dpy.drvVtable().vaDestroySurfaces(dpy.drvCtx(), &desc.va_surface_id, 1);
+        auto status = vaDestroySurfaces(desc.va_display, &desc.va_surface_id, 1);
         if (status != VA_STATUS_SUCCESS)
             throw std::runtime_error("vaDestroySurfaces failed, " + std::to_string(status));
 
     } catch (const std::exception& e) {
         // log_error("Failed to destroy surface: {}. Error: {}", desc.va_surface_id, e.what());
+    }
+}
+
+bool VaApiFrame::is_ready() const {
+    VASurfaceStatus surface_status = VASurfaceRendering;
+    VAStatus sts = vaQuerySurfaceStatus(desc.va_display, desc.va_surface_id, &surface_status);
+    if (sts != VA_STATUS_SUCCESS)
+        throw std::runtime_error(std::string("vaQuerySurfaceStatus") +
+                                 " failed: " + std::to_string(sts));
+
+    return surface_status == VASurfaceReady;
+}
+
+void VaApiFrame::sync() const {
+    if (is_ready())
+        return;
+
+    // Warning: Here we use polling status loop because of VaSyncSurface on batch 512 issue.
+    // TODO: Change it to vaSyncSurface when issue fixed
+    while (!is_ready()) {
     }
 }

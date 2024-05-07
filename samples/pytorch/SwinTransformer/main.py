@@ -8,17 +8,21 @@ The input is the path to a media file and the inference output (per frame) is a 
 The watermark is drawn with PIL python package. To best follow the code, one can start with the `main()` function below and subsequently read about individual functions invoked.
 """
 
-
 import intel_extension_for_pytorch as ipex
-import torch
-import argparse
 import torchvision.models as models
 from pathlib import Path
 import sys
 
 root_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
 sys.path.append(root_dir)
-from samples.pytorch.utils.imagenet2012_util import add_arguments, ImageNet2012Util
+from samples.pytorch.utils.imagenet_util.imagenet_pipeline import (
+    ImageNetPipeline,
+    ImageNetArguments,
+)
+from samples.pytorch.utils.pt_pipeline import optimize_model, jit_optimize_model
+
+OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+NUM_FRAMES = 40000
 
 
 def main():
@@ -26,16 +30,10 @@ def main():
     # 1. Inputs
     # ----------------------------------
     # The following code takes in a optional input file
-    parser = argparse.ArgumentParser(
-        prog="Swin T Classification Sample", description="PyTorch sample for Swin Transformer"
+    pt_args = ImageNetArguments(
+        "swin_b", batch_size=4, output_dir=OUTPUT_DIR, num_frames=NUM_FRAMES
     )
-    parser = add_arguments(parser, default_num_frames=40_000)
-
-    args = parser.parse_args()
-
-    media_path = args.input
-    if not (Path(media_path).is_file()):
-        raise ValueError(f"Cannot find input media {args.input}")
+    args = pt_args.parse_args()
 
     #########################
     # 2. Loading pre-trained model
@@ -51,44 +49,10 @@ def main():
     # ----------------------------------
     # Model evaluation with :func `torch.nn.Module.eval`
     model.eval()
+    model = optimize_model(model, args, convert_to_fp16=True)
+    model = jit_optimize_model(model, args, width=224, height=224, trace=True)
 
-    #########################
-    # 4. Device Availability
-    # ----------------------------------
-    # Using `torch.xpu.is_available()` supported by Intel® Extension for PyTorch*,
-    # the presence of an Intel GPU device can be checked and fallback is CPU.
-    if "xpu" in args.device:
-        device = args.device if hasattr(torch, "xpu") and torch.xpu.is_available() else "cpu"
-    elif "cpu" == args.device:
-        device = "cpu"
-    else:
-        raise ValueError(f"Unknown acceleration type - {args.device}")
-
-    #########################
-    # 5. Model Load to device
-    # ----------------------------------
-    # Using :func `torch.Tensor.half`, one can load the Float16 version of the model to device CPU/XPU as determined previously
-
-    model = model.half().to(device)
-
-    #########################
-    # 6. Model Optimization
-    # ----------------------------------
-    # Using `optimize` provided by Intel® Extension for PyTorch* for optimization on Intel GPU
-    if "xpu" in device:
-        model = ipex.optimize(model)
-
-    # Jit optimizations
-    if not args.disable_jit:
-        print("Running Jit Optimization on model")
-        random_tensor = torch.randn((1, 3, 224, 224), device=device).half()
-        model = torch.jit.trace(model, random_tensor)
-
-    imagenet_util = ImageNet2012Util(model, media_path, args, "swin_b")
-
-    #########################
-    # Warm Up with random data
-    imagenet_util.warmup()
+    pipeline = ImageNetPipeline(model, args)
 
     #########################
     # 7. Processing Frames
@@ -100,7 +64,7 @@ def main():
     # - Inference
     # - Watermark
     # Each of these are explained above
-    imagenet_util.process_frames()
+    pipeline.run()
 
 
 if __name__ == "__main__":

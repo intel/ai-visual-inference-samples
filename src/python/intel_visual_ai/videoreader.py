@@ -3,9 +3,12 @@
 # For future upstream possibilities
 import logging as log
 import importlib
-
-libvideoreader = importlib.import_module(".libvisual_ai.videoreader", package=__package__)
 from typing import Any, Dict, Iterator, Optional
+
+try:
+    import intel_visual_ai.libvisual_ai.videoreader as libvideoreader
+except ModuleNotFoundError:
+    pass
 
 
 class VideoReader:
@@ -31,8 +34,14 @@ class VideoReader:
             # FIXME: XpuEncoder and XpuDecoder if we are using the same device the string MUST BE the same!
             # Tentatively it is fixed using the self.backend which equates to "xpu" but if there are more
             # Devices this mechanism will create two different context! This affects ContextManager!
-            self._c = libvideoreader.XpuDecoder(src, self.backend)
-            self._c.set_output_original_nv12(self.output_original_nv12)
+            try:
+                self._c = libvideoreader.XpuDecoder(src, self.backend)
+                self._c.set_output_original_nv12(self.output_original_nv12)
+            except Exception as e:
+                raise ImportError(
+                    """intel_visual_ai libvideoreader import failed. XPU decode not possible.
+                    Please check your intel_visual_ai installation and available environment"""
+                )
         else:
             raise RuntimeError("Unknown video backend: {}".format(self.backend))
 

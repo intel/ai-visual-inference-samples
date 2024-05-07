@@ -5,6 +5,9 @@
 #include <stdexcept>
 #include <string_view>
 #include <memory>
+#include "unistd.h"
+#include <fcntl.h>
+#include <iostream>
 
 extern "C" {
 #include <va/va.h>
@@ -17,39 +20,45 @@ extern "C" {
  * Needed for more convenient usage of VADisplay and its fields.
  */
 class VaDpyWrapper final {
-  public:
-    explicit VaDpyWrapper() = default;
-    explicit VaDpyWrapper(VADisplay d) : _dpy(d) {
-        if (!isDisplayValid(_dpy))
-            throw std::invalid_argument("VADisplay is invalid.");
-    }
-
-    static VaDpyWrapper fromHandle(VADisplay d) { return VaDpyWrapper(d); }
-
-    static bool isDisplayValid(VADisplay d) noexcept {
-        auto pDisplayContext = reinterpret_cast<VADisplayContextP>(d);
-        return d && pDisplayContext && (pDisplayContext->vadpy_magic == VA_DISPLAY_MAGIC) &&
-               pDisplayContext->pDriverContext;
-    }
-
-    VADisplay raw() const noexcept { return _dpy; }
-
-    explicit operator bool() const noexcept { return isDisplayValid(_dpy); }
-
-    VADisplayContextP dpyCtx() const noexcept { return reinterpret_cast<VADisplayContextP>(_dpy); }
-
-    VADriverContextP drvCtx() const noexcept { return dpyCtx()->pDriverContext; }
-
-    const VADriverVTable& drvVtable() const noexcept { return *drvCtx()->vtable; }
-
   private:
-    VADisplay _dpy = nullptr;
+    struct Storage {
+        int drm_fd = -1;
+        VADisplay display = nullptr;
+        Storage(std::string_view device);
+        ~Storage();
+
+        // No COPY
+        Storage(const Storage&) = delete;
+        Storage& operator=(const Storage&) = delete;
+    };
+
+    std::shared_ptr<Storage> ptr_;
+
+  public:
+    explicit VaDpyWrapper() noexcept = default;
+    explicit VaDpyWrapper(std::string_view device) : ptr_(std::make_shared<Storage>(device)) {}
+
+    // Default copy
+    VaDpyWrapper(const VaDpyWrapper&) = default;
+    VaDpyWrapper& operator=(const VaDpyWrapper&) = default;
+
+    // Default move
+    VaDpyWrapper(VaDpyWrapper&&) = default;
+    VaDpyWrapper& operator=(VaDpyWrapper&&) = default;
+
+    // Returns native handle
+    VADisplay native() const noexcept {
+        if (ptr_)
+            return ptr_->display;
+        return nullptr;
+    }
+
+    explicit operator bool() const noexcept { return ptr_ != nullptr; }
 };
 
 class VaApiContext final {
   public:
-    explicit VaApiContext(VADisplay va_display);
-    explicit VaApiContext(std::string_view device);
+    explicit VaApiContext(VaDpyWrapper va_display_wrapper);
 
     ~VaApiContext();
 
@@ -58,14 +67,12 @@ class VaApiContext final {
     VaApiContext& operator=(const VaApiContext&) = delete;
 
     /* getters */
-    VADisplay DisplayRaw() const;
-    VaDpyWrapper Display() const;
-    VAContextID Id() const;
-    int RTFormat() const;
-    bool IsPixelFormatSupported(int format) const;
+    VADisplay display_native() const;
+    const VaDpyWrapper& display() const;
+    VAContextID id_native() const;
+    bool is_pixel_format_supported(int format) const;
 
   private:
-    int drm_fd_ = -1;
     VaDpyWrapper _display;
     VAConfigID _va_config_id = VA_INVALID_ID;
     VAContextID _va_context_id = VA_INVALID_ID;
@@ -76,7 +83,6 @@ class VaApiContext final {
     /* private helper methods */
     void create_config_and_contexts();
     void create_supported_pixel_formats();
-    void init_vaapi_objects(std::string_view device);
 };
 
 using VaApiContextPtr = std::shared_ptr<VaApiContext>;

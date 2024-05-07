@@ -3,10 +3,21 @@
 #include <iostream>
 #include <scope_guard.hpp>
 
+uint32_t memory_format_to_fourcc(MemoryFormat format) {
+    if (format == MemoryFormat::pt_packed_rgba)
+        return VA_FOURCC_RGBA;
+    else if (format == MemoryFormat::pt_planar_rgbp)
+        return VA_FOURCC_RGBP;
+    else if (format == MemoryFormat::ov_planar_nv12)
+        return VA_FOURCC_NV12;
+
+    throw std::runtime_error("unsupported or invalid memory format");
+}
+
 // use command below to convert nv12 surface to bmp image
 // ffmpeg -s <width>x<height> -pix_fmt nv12 -f rawvideo -i dump.nv12 out.bmp
 bool dump_va_surface(VADisplay display, VASurfaceID surface, const std::string& filename) {
-    // log_info("dump_va_surface: display={}, surface={}, file={}", display, surface, filename);
+    // log::info("dump_va_surface: display={}, surface={}, file={}", display, surface, filename);
 
     FILE* fp = fopen(filename.data(), "wb+");
     if (!fp) {

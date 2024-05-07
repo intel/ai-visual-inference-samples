@@ -68,9 +68,9 @@ XpuEncoder::XpuEncoder(const std::string& output_file, const std::string& device
     : XpuEncoder(
           output_file,
           ContextManager::get_instance()
-              .get_va_context(
+              .get_va_display(
                   ContextManager::get_instance().get_device_path_from_device_name(device_name))
-              ->DisplayRaw(),
+              .native(),
           video_info) {
 }
 

@@ -6,34 +6,62 @@
   ```bash
   sudo apt install -y  xpu-smi
   ```
-* Install Linux tools and enable performance mode
+* Enable performance mode
   ```bash
-  sudo apt install -y  linux-tools-common linux-tools-generic
   sudo /usr/lib/linux-tools-<version>/cpupower frequency-set --governor performance
   ```
 
 ## 2. Build and Run Docker image
-Build and run docker image according to the Step 2 from instructions in [README](../README.md)
+Build and run docker image for desired backend using [these instructions](running-sample-apps.md)
 
 ## 3. Run Intel® AI Visual Inference Samples
 
-Navigate to samples directory by
+### Intel® Extension for PyTorch* as inference framework
+
+Navigate to the samples directory inside the docker container:
 ```bash
 cd samples/pytorch
 ```
-Then run desired sample using auxiliary `run_multi.sh` script as shown later in this section.
 
-Run each sample for `--n-procs` 4,6,8 on Intel® Data Center GPU Flex Series 140 and 170. The `--n-procs` specifies how many process instances will be executed.
-To reach optimal performance you have to run 8 processes. It is possible to have `PI_ERROR_OUT_OF_RESOURCES` error status on Intel® Data Center GPU Flex Series 140 with ResNet50-v1.5 workload. In that case, you have to reduce the number of processes to 6.
+Run your desired sample using auxiliary `run_multi.sh` script as shown later in this section.
 
-| Name| Command|
-|----------|------------------|
-| Swin_transfomer FP16 224x224 bs=4 | `./run_multi.sh --sample-name SwinTransformer --sample-args "--iterations 1 --frames-per-iteration 40000" --multi-device --n-procs <fill_here> `  |
-| ResNet50-v1.5 INT8 224x224 bs=64 | `./run_multi.sh --sample-name ResNet50 --sample-args "--iterations 1 --frames-per-iteration 400000" --multi-device --n-procs <fill_here> `  |
+Run each sample for `--n-procs` 4,6,8 on Intel® Data Center GPU Flex Series 140 and 170. `--n-procs` specifies how many process instances will be executed.
+To reach optimal performance run 8 processes. You may encounter the `PI_ERROR_OUT_OF_RESOURCES` error when running the ResNet50-v1.5 workload on Intel® Data Center GPU Flex Series 140 systems. In that case, reduce the number of processes to 6.  
+By default, the duration of sample execution is selected according to each workload performance and takes around 2 minutes, if you want to change the duration you can modify the number of frames to process via `--sample-args "--num-frames <fill_here>"` option.
+
+| Name     | Precis. | Command |
+|----------|-----------|---------|
+| SwinTransfomer</br>[224x224 bs=4] | FP16 | `./run_multi.sh --sample-name SwinTransformer --sample-args "--num-frames 40000" --multi-device --n-procs <fill_here>`  |
+| ResNet50-v1.5 </br>[224x224 bs=64] | INT8 | `./run_multi.sh --sample-name ResNet50 --sample-args "--num-frames 400000" --multi-device --n-procs <fill_here>`  |
+
+### OpenVINO™ Toolkit as inference framework
+
+Navigate to the samples directory inside the docker container:
+```bash
+cd samples/openvino
+```
+
+Run your desired sample using auxiliary `run_multi.sh` script as shown later in this section.
+
+OpenVINO™ Toolkit based samples are optimized to perform within a single process per GPU.
+So, Intel® Data Center GPU Flex Series 170 it's reccomended to use 1 process (`--n-procs 1`) and for Intel® Data Center GPU Flex Series 140 – 2 processes (`--n-procs 2`) to reach optimal throughput. 
+
+> ℹ️ When running the samples on Intel® Data Center GPU Flex Series 170 using a single process, you can omit `run_multi.sh` script and invoke sample directly by going to the sample directory and calling `python3 main.py`.
+>
+> Please refer to ["Running Sample Applications"](running-sample-apps.md) document for details.
+
+| Name     | Precis. | Command |
+|----------|-----------|---------|
+| FBNet</br>[224x224 bs=64]   | FP16 | `./run_multi.sh --sample-name FBNet --n-procs <fill_here> --multi-device` |
+| ResNet50</br>[224x224 bs=64] | INT8 | `./run_multi.sh --sample-name ResNet50 --n-procs <fill_here> --multi-device` |
+| SwinTransformer</br>[224x224 bs=64] | FP16 | `./run_multi.sh --sample-name SwinTransformer --n-procs <fill_here> --multi-device` |
+| YOLOv5m</br>[320x320 bs=64] | INT8 | `./run_multi.sh --sample-name YOLOv5m --n-procs <fill_here> --multi-device` | 
+| YOLOv5m + AVC</br>[320x320 bs=64] | INT8 | `./run_multi.sh --sample-name YOLOv5m --n-procs <fill_here> --multi-device --sample-args "--input ~/ma/data/media/20230104_dog_bark_1920x1080_3mbps_30fps_ld_h264.mp4"` | 
+| SSD MobileNet</br>[300x300 bs=64] | INT8 | `./run_multi.sh --sample-name ssd_mobilenet_v1_coco --n-procs <fill_here> --multi-device` |
 
 
 ## Profiling
-Profiling can be done using Intel® XPU Manager for any workloads one for each run. To get more information about available metrics see [Intel® XPU Manager](https://github.com/intel/xpumanager/blob/master/doc/smi_user_guide.md) 
+Profiling can be done using Intel® XPU Manager for any workloads one for each run. To get more information about available metrics see [Intel® XPU Manager](https://github.com/intel/xpumanager/blob/master/doc/smi_user_guide.md)
 
 Example Profiling
 ```bash

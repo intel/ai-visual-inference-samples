@@ -6,6 +6,7 @@
 #
 
 SAMPLE_NAME=
+RESULTS_DIR=
 N_PROCS=1
 SAMPLE_ARGS=
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
@@ -31,6 +32,7 @@ show_help() {
     echo "Options:"
     echo "  --sample-name <sampledir> Name of sample directory"
     echo "  --n-procs <num>           Number of processes to run [default: $N_PROCS]"
+    echo "  --output-dir <dir>        Path to sample outputs dir [default: SAMPLE_NAME/output]"
     echo "  --sample-args <args>      Sample arguments"
     echo "  --multi-device            Distribute processes proportionally on available GPU devices"
     echo "  --install-requirements    Runs pip install -r requirements.txt in the sample directory if it exists"
@@ -66,12 +68,20 @@ while [[ "$#" -gt 0 ]]; do
             error 'ERROR: "--n-procs" requires a non-empty option argument.'
         fi
         ;;
+    --output-dir)
+        if [ "$2" ]; then
+            RESULTS_DIR=$2
+            shift
+        else
+            error 'ERROR: "--output-dir" requires a non-empty option argument.'
+        fi
+        ;;
     --sample-args)
         if [ "$2" ]; then
             SAMPLE_ARGS+="$2 "
             shift
         else
-            error 'ERROR: "--entrypoint-args" requires a non-empty option argument.'
+            error 'ERROR: "--sample-args" requires a non-empty option argument.'
         fi
         ;;
     --multi-device)
@@ -93,7 +103,8 @@ while [[ "$#" -gt 0 ]]; do
 
     shift
 done
-
+echo $N_PROCS
+echo $SAMPLE_ARGS
 if [ -z "$SAMPLE_NAME" ]; then
     error '--sample-name must be set '
 fi
@@ -104,7 +115,10 @@ if [ ! -d $SAMPLE_DIR ]; then
   error "Invalid sample directory ${SAMPLE_DIR}, please specify correct sample name"
 fi
 
-RESULTS_DIR="$SAMPLE_DIR/output"
+if [ -z "$RESULTS_DIR" ]; then
+    RESULTS_DIR="$SAMPLE_DIR/output"
+fi
+
 SAMPLE_ARGS+="--output-dir $RESULTS_DIR "
 
 show_options
@@ -173,9 +187,9 @@ fi
 total_fps=0
 total_latency=0
 total_frames=0
-for file in $RESULTS_DIR/*.log
+for file in $RESULTS_DIR/*latency*.log
 do
-    fps=$(grep -Po 'Average throughput:\K[^fps]*' $file | tail -1)
+    fps=$(grep -Po 'Throughput :\K[^fps]*' $file | tail -1)
     total_fps=$(awk "BEGIN {printf \"%.4f\",${total_fps}+${fps}}")
 
     batch_size=$(grep -Po 'Batch_size: \K[^*]*' $file | tail -1)

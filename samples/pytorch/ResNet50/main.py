@@ -8,8 +8,6 @@ The input is the path to a media file and the inference output (per frame) is a 
 The watermark is drawn with PIL python package. To best follow the code, one can start with the `main()` function below and subsequently read about individual functions invoked.
 """
 
-import intel_extension_for_pytorch as ipex
-import torch
 import torchvision.models as models
 import argparse
 from pathlib import Path
@@ -18,9 +16,19 @@ import sys
 
 root_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
 sys.path.append(root_dir)
-from samples.pytorch.utils.imagenet2012_util import add_arguments, ImageNet2012Util
+from samples.pytorch.utils.imagenet_util.imagenet_pipeline import (
+    ImageNetPipeline,
+    ImageNetArguments,
+)
+from samples.pytorch.utils.pt_pipeline import optimize_model
+
+OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 from samples.pytorch.utils.resnet50_util.quantization import Quantization
-from intel_visual_ai.dataset.imagenette import ImageNette
+
+# TODO: ImageNette and Dataset utils needs to be removed after TorchVision 0.17.0 release by IPEX
+from samples.models.dataset.imagenette import ImageNette
+
+NUM_FRAMES = 400_000
 
 import warnings
 
@@ -32,24 +40,19 @@ def main():
     # 1. Inputs
     # ----------------------------------
     # The following code takes in a optional input file
-    parser = argparse.ArgumentParser(
-        prog="ResNet-50 Classification Sample", description="PyTorch sample for ResNet-50"
+    pt_args = ImageNetArguments(
+        "resnet50", batch_size=64, output_dir=OUTPUT_DIR, num_frames=NUM_FRAMES
     )
 
-    parser = add_arguments(parser, default_batch_size=64, default_num_frames=400_000)
-
-    parser.add_argument(
+    pt_args.parser.add_argument(
         "--run_accuracy_test",
         default=False,
         action=argparse.BooleanOptionalAction,
         help="Runs the Quantization accuracy test",
     )
+    args = pt_args.parse_args()
 
-    args = parser.parse_args()
-
-    media_path = args.input
-    if not (Path(media_path).is_file()):
-        raise ValueError(f"Cannot find input media {args.input}")
+    logger = pt_args.create_logger()
 
     #########################
     # 2. Loading pre-trained model
@@ -69,23 +72,12 @@ def main():
     model.eval()
 
     #########################
-    # 4. Device Availability
-    # ----------------------------------
-    # Using `torch.xpu.is_available()` supported by Intel® Extension for PyTorch*,
-    # the presence of an Intel GPU device can be checked and fallback is CPU.
-    if "xpu" in args.device:
-        device = args.device if hasattr(torch, "xpu") and torch.xpu.is_available() else "cpu"
-    elif "cpu" == args.device:
-        device = "cpu"
-    else:
-        raise ValueError(f"Unknown acceleration type - {args.device}")
-
-    #########################
     # 5. Model Load to device
     # ----------------------------------
     # Using :func `Quantization().quantize_int8`, this will quantize the model from FP32 to INT8 version of the model to device CPU/XPU
-    quantization = Quantization(device, dataset_path=args.dataset_dir)
-    model = model.to(device)
+    quantization = Quantization(args.device, dataset_path=args.dataset_dir, logger=logger)
+
+    model = model.to(args.device)
     model = quantization.quantize_int8(model)
 
     #########################
@@ -97,6 +89,9 @@ def main():
     # Using ImageNette val dataset:
     #     Top 1 Accuracy: 84 %
     #     Top 5 Accuracy: 98 %
+    # Using ImageNet val dataset:
+    #     Top 1 Accuracy: 78 %
+    #     Top 5 Accuracy: 94 %
     if args.run_accuracy_test:
         print("[INFO] Running accuracy test")
         quantization.calculate_accuracy(model)
@@ -105,13 +100,9 @@ def main():
     # 6. Model Optimization
     # ----------------------------------
     # Using `optimize` provided by Intel® Extension for PyTorch* for optimization on Intel GPU
-    if "xpu" in device:
-        model = ipex.optimize(model)
+    model = optimize_model(model, args, convert_to_fp16=False)
 
-    imagenet_util = ImageNet2012Util(model, media_path, args, "resnet50", model_precision="FP32")
-    #########################
-    # Warm Up with random data
-    imagenet_util.warmup()
+    pipeline = ImageNetPipeline(model, args, logger=logger)
 
     #########################
     # 7. Processing Frames
@@ -123,7 +114,7 @@ def main():
     # - Inference
     # - Watermark
     # Each of these are explained above
-    imagenet_util.process_frames()
+    pipeline.run()
 
 
 if __name__ == "__main__":

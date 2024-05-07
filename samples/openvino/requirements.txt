@@ -1,0 +1,2 @@
+-r FBNet/requirements.txt
+-r YOLOv5m/requirements.txt

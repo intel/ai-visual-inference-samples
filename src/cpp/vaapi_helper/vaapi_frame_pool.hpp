@@ -20,7 +20,13 @@ class VaApiFramePool {
     };
     VaApiFramePool(VaApiContextPtr context, uint32_t pool_size, FrameInfo info);
 
+    // Acquire frame from pool. If there is no free frame, it waits for a free frame.
     VaApiFrame* acquire();
+    // Acquire frame from pool. If there is no free frame, it returns nullptr immedeatly.
+    VaApiFrame* acquire_nowait();
     void release(VaApiFrame* frame);
     void flush();
+
+  private:
+    VaApiFrame* acquire_internal_locked();
 };

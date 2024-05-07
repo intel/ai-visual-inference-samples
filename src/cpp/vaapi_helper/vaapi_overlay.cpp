@@ -43,7 +43,7 @@ std::tuple<cv::Mat, cv::Rect> prepare_mat(const std::vector<OverlayBox>& boxes,
 
     std::transform(boxes.begin(), boxes.end(), std::back_inserter(cvboxes),
                    [](const OverlayBox& b) {
-                       return cv::Rect{b.x, b.y, b.width, b.height};
+                       return cv::Rect{cv::Point{b.x1, b.y1}, cv::Point{b.x2, b.y2}};
                    });
 
     // Get texts sizes
@@ -72,8 +72,9 @@ std::tuple<cv::Mat, cv::Rect> prepare_mat(const std::vector<OverlayBox>& boxes,
     for (size_t i = 0; i < texts.size(); i++) {
         const auto& t = texts[i];
         const auto& tsize = texts_size[i];
-        cv::putText(mat, t.text, {t.x, t.y + tsize.height}, font.face, font.scale,
-                    cv::Scalar(0, 255, 0, 255), font.thickness);
+        const auto org = cv::Point{t.x - bounding_rect.tl().x, t.y + tsize.height};
+        cv::putText(mat, t.text, org, font.face, font.scale, cv::Scalar(0, 255, 0, 255),
+                    font.thickness);
     }
 
     return {std::move(mat), bounding_rect};
@@ -120,10 +121,31 @@ std::unique_ptr<VaApiFrame> cvmat_to_vaapi_frame(VADisplay va_display, cv::Mat& 
     return frame;
 }
 
-VaApiOverlay::VaApiOverlay(VADisplay va_display)
-    : va_display_(va_display), context_(std::make_unique<VaApiContext>(va_display_)) {
-    std::cout << "overlay: ctor; dpy=" << va_display_ << " rt_format=" << std::hex
-              << context_->RTFormat() << std::dec << " sync=" << sync_surface_ << std::endl;
+std::tuple<cv::Rect, bool> clip_region(cv::Rect region, cv::Size img_size) {
+    auto clipped = region & cv::Rect{{0, 0}, img_size};
+    return {clipped, region != clipped};
+}
+
+std::tuple<cv::Mat, cv::Rect, bool> clip_mat(cv::Mat mat, cv::Point mat_pos, cv::Size img_size) {
+    auto [mat_region, clipped] = clip_region(cv::Rect{mat_pos, mat.size()}, img_size);
+    if (clipped)
+        mat = mat(cv::Rect({0, 0}, mat_region.size()));
+
+    return {mat, mat_region, clipped};
+}
+
+VARectangle cvrect2varect(cv::Rect r) {
+    return VARectangle{.x = int16_t(r.x),
+                       .y = int16_t(r.y),
+                       .width = uint16_t(r.width),
+                       .height = uint16_t(r.height)};
+}
+
+VaApiOverlay::VaApiOverlay(VaDpyWrapper va_display)
+    : va_display_(va_display.native()),
+      context_(std::make_shared<VaApiContext>(std::move(va_display))) {
+    logger_.debug("overlay::ctor: display={:#x}, sync={}", reinterpret_cast<uintptr_t>(va_display_),
+                  sync_surface_);
 }
 
 VaApiOverlay::~VaApiOverlay() {
@@ -133,28 +155,31 @@ std::unique_ptr<VaApiFrame> VaApiOverlay::draw(VaApiFrame& src_frame, std::vecto
                                                std::vector<OverlayText> texts) {
     using namespace std::chrono;
 
-    std::cout << "overlay: draw; surface=" << src_frame.desc.va_surface_id
-              << ", wxh=" << src_frame.desc.width << 'x' << src_frame.desc.height
-              << ", num boxes=" << boxes.size() << ", num texts=" << texts.size() << std::endl;
+    logger_.debug("overlay::draw: surface={}, wxh={}x{}, num boxes={}, num texts={}",
+                  src_frame.desc.va_surface_id, src_frame.desc.width, src_frame.desc.height,
+                  boxes.size(), texts.size());
 
     const auto tp0 = high_resolution_clock::now();
 
-    auto [mat, bounding_rec] = prepare_mat(boxes, texts, font_cfg_);
+    auto [mat_first, bounding_rec] = prepare_mat(boxes, texts, font_cfg_);
+
+    // Make sure that mat fits on image at desired position, clip if needed
+    auto [mat, mask_region, clipped] =
+        clip_mat(mat_first, bounding_rec.tl(), {src_frame.desc.width, src_frame.desc.height});
+
+    if (clipped)
+        logger_.warn("Drawing area was cropped due to elements outside the field. Check "
+                     "position & size of elements.");
 
     const auto tp1 = high_resolution_clock::now();
 
-    auto mask_frame = cvmat_to_vaapi_frame(context_->DisplayRaw(), mat);
+    auto mask_frame = cvmat_to_vaapi_frame(context_->display_native(), mat);
     if (!mask_frame)
         throw std::runtime_error("overlay: couldn't convert cvmat to vasurface");
 
     const auto tp2 = high_resolution_clock::now();
 
-    auto mask_region = VARectangle{.x = int16_t(bounding_rec.x),
-                                   .y = int16_t(bounding_rec.y),
-                                   .width = mask_frame->desc.width,
-                                   .height = mask_frame->desc.height};
-
-    auto out_frame = blend(src_frame, *mask_frame, mask_region);
+    auto out_frame = blend(src_frame, *mask_frame, cvrect2varect(mask_region));
 
     const auto tp3 = high_resolution_clock::now();
     stats_.last_total = duration_cast<microseconds>(tp3 - tp0);
@@ -171,12 +196,12 @@ std::unique_ptr<VaApiFrame> VaApiOverlay::draw(VaApiFrame& src_frame, std::vecto
 
 std::unique_ptr<VaApiFrame> VaApiOverlay::blend(VaApiFrame& src, VaApiFrame& mask,
                                                 VARectangle mask_region) {
-    auto out_frame = std::make_unique<VaApiFrame>(context_->DisplayRaw(), src.desc.width,
+    auto out_frame = std::make_unique<VaApiFrame>(context_->display_native(), src.desc.width,
                                                   src.desc.height, src.desc.format);
 
     const auto out_surface = out_frame->desc.va_surface_id;
 
-    auto status = vaBeginPicture(va_display_, context_->Id(), out_surface);
+    auto status = vaBeginPicture(va_display_, context_->id_native(), out_surface);
     if (status != VA_STATUS_SUCCESS)
         throw std::runtime_error(std::string("overlay: vaBeginPicture failed, error: ") +
                                  vaErrorStr(status));
@@ -204,8 +229,9 @@ std::unique_ptr<VaApiFrame> VaApiOverlay::blend(VaApiFrame& src, VaApiFrame& mas
 
     for (size_t i = 0; i < std::size(params); i++) {
         VABufferID params_id;
-        status = vaCreateBuffer(va_display_, context_->Id(), VAProcPipelineParameterBufferType,
-                                sizeof(VAProcPipelineParameterBuffer), 1, &params[i], &params_id);
+        status =
+            vaCreateBuffer(va_display_, context_->id_native(), VAProcPipelineParameterBufferType,
+                           sizeof(VAProcPipelineParameterBuffer), 1, &params[i], &params_id);
         if (status != VA_STATUS_SUCCESS)
             throw std::runtime_error(std::string("overlay: vaCreateBuffer failed (") +
                                      std::to_string(i) + "), error:" + vaErrorStr(status));
@@ -213,17 +239,17 @@ std::unique_ptr<VaApiFrame> VaApiOverlay::blend(VaApiFrame& src, VaApiFrame& mas
         auto sg_buffer = make_scope_guard([&] {
             status = vaDestroyBuffer(va_display_, params_id);
             if (status != VA_STATUS_SUCCESS)
-                std::cerr << "overlay: vaDestroyBuffer failed (" << i
-                          << "), error: " << vaErrorStr(status) << std::endl;
+                logger_.error("overlay: vaDestroyBuffer failed ({}): bufid={}, error={}", i,
+                              params_id, vaErrorStr(status));
         });
 
-        status = vaRenderPicture(va_display_, context_->Id(), &params_id, 1);
+        status = vaRenderPicture(va_display_, context_->id_native(), &params_id, 1);
         if (status != VA_STATUS_SUCCESS)
             throw std::runtime_error(std::string("overlay: vaRenderPicture failed (") +
                                      std::to_string(i) + "), error:" + vaErrorStr(status));
     }
 
-    status = vaEndPicture(va_display_, context_->Id());
+    status = vaEndPicture(va_display_, context_->id_native());
     if (status != VA_STATUS_SUCCESS)
         throw std::runtime_error(std::string("overlay: vaEndPicture failed, error: ") +
                                  vaErrorStr(status));
@@ -239,8 +265,7 @@ std::unique_ptr<VaApiFrame> VaApiOverlay::blend(VaApiFrame& src, VaApiFrame& mas
                     std::string("overlay: vaQuerySurfaceStatus failed, error: ") +
                     vaErrorStr(status));
 
-            std::cout << "overlay: surface status: " << static_cast<int>(surface_status)
-                      << std::endl;
+            logger_.debug("overlay: surface status={}, id={}", static_cast<int>(surface_status), out_surface);
         } while (surface_status != VASurfaceReady);
 #endif
 

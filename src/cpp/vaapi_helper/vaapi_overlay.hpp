@@ -3,11 +3,14 @@
 #include <vaapi_frame.hpp>
 #include <vaapi_context.hpp>
 
+#include "logger.hpp"
+
+// Box coordinates in xyxy format
 struct OverlayBox {
-    int x;
-    int y;
-    int width;
-    int height;
+    int x1;
+    int y1;
+    int x2;
+    int y2;
 };
 
 struct OverlayText {
@@ -32,7 +35,7 @@ class VaApiOverlay final {
         std::chrono::microseconds last_blend;
     };
 
-    VaApiOverlay(VADisplay va_display);
+    VaApiOverlay(VaDpyWrapper va_display);
 
     ~VaApiOverlay();
 
@@ -49,6 +52,7 @@ class VaApiOverlay final {
     VaApiOverlay::Stats stats() const { return stats_; }
 
   private:
+    Logger logger_;
     VADisplay va_display_;
     VaApiContextPtr context_;
     bool sync_surface_ = true;

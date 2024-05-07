@@ -1,6 +1,9 @@
 #pragma once
 
 #include <future>
+#include <assert.h>
+
+#include "visual_ai/frame.hpp"
 
 struct FrameDescription {
     uint32_t format = 0; // FourCC
@@ -13,10 +16,10 @@ struct FrameDescription {
     void* va_display = nullptr;
 };
 
-struct VaApiFrame {
+struct VaApiFrame : public Frame {
     FrameDescription desc;
     bool completed = true;
-    std::future<void> sync;
+    std::future<void> completed_sync; // TODO: consider removing
     bool owns_surface = false;
 
     VaApiFrame() = default;
@@ -24,11 +27,38 @@ struct VaApiFrame {
                int format, bool owns = false);
     VaApiFrame(void* va_display, uint32_t va_surface_id, bool owns = false);
     VaApiFrame(void* va_display, uint32_t width, uint32_t height, int format);
-    virtual ~VaApiFrame();
+    ~VaApiFrame();
 
     // Implement deep copy of VaSurface only
     static std::unique_ptr<VaApiFrame> copy_from(const VaApiFrame& other);
-    // No Copy
-    VaApiFrame(const VaApiFrame&) = delete;
-    VaApiFrame& operator=(const VaApiFrame&) = delete;
+
+    // Checks if surface status is "ready"
+    bool is_ready() const;
+
+    // Performs surface synchronization
+    void sync() const;
+};
+
+// Thin wrapper around raw VaApiFrame pointer.
+// Enables conversion to VaApiFrame and custom deletion
+//
+// Main purpose is wrapping raw pointers from pool to enable custom deletion
+// TODO: Integrate into frame pool.
+struct VaApiFrameWrap final : public VaApiFrame {
+    using FrameDelFn = std::function<void(VaApiFrame*)>;
+
+    VaApiFrame* frame = nullptr;
+    FrameDelFn frame_deleter;
+
+    VaApiFrameWrap(VaApiFrame* f, FrameDelFn del_fn)
+        : VaApiFrame(f->desc.va_display, f->desc.va_surface_id, f->desc.width, f->desc.height,
+                     f->desc.format, false),
+          frame(f), frame_deleter(del_fn) {}
+
+    ~VaApiFrameWrap() {
+        if (frame) {
+            assert(frame_deleter);
+            frame_deleter(frame);
+        }
+    }
 };

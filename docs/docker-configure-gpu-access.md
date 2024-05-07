@@ -27,26 +27,26 @@ group_name=render group_id=134
 
 ### Configure Container for Non-Root User Access
 
-To enable GPU access for a non-root _user_ in the container, follow these steps:
+To enable GPU access for a non-root user (named `user`) in the container, follow these steps:
 
 1. **Run the Docker Container with Group Access**:
    
-   Use the group ID from your host to grant _user_ access to the GPU device:
+   Use the group ID from your host to grant `user` access to the GPU device:
 
    ```bash
-   docker run -it --rm --device /dev/dri --group-add=$(stat -c "%g" /dev/dri/render* | head -1) <image_name>
+   docker run -it --rm --device /dev/dri --group-add=$(stat -c "%g" /dev/dri/render*) <image_name>
    ```
 
-   This command adds the container's _user_ to the group with the same group ID as the host's render group, allowing GPU access.
+   This command adds the container's `user` to the group with the same group ID as the host's render group, allowing GPU access.
 
 2. **Bind Mount `/dev/dri`** (Optional):
 
    If your application requires direct access to the device files, you can bind mount the `/dev/dri` directory:
 
    ```bash
-   docker run -it --rm --device /dev/dri --group-add=$(stat -c "%g" /dev/dri/render* | head -1) -v /dev/dri:/dev/dri <image_name>
+   docker run -it --rm --device /dev/dri --group-add=$(stat -c "%g" /dev/dri/render*) -v /dev/dri:/dev/dri <image_name>
    ```
 
 ## Conclusion
 
-By implementing this configuration, the _user_ within your container, Ubuntu 22.04 will have appropriate access to the GPU resources, ensuring optimal performance for your AI and machine learning projects.
+By implementing this configuration, the `user` within your container, Ubuntu 22.04 will have appropriate access to the GPU resources, ensuring optimal performance for your AI and machine learning projects.

@@ -4,6 +4,7 @@ build
 __pycache__
 *.so
 *.dylib
+**.egg-info
 *~
 
 # direnv
@@ -13,5 +14,11 @@ __pycache__
 ## Pytest output folder
 .pytest_output/
 
+## Samples output folder
+output/
+
 ## Datasets folders during sample execution
-src/python/intel_visual_ai/dataset/
+data/datasets/
+
+## local folder to store converted models
+data/models

@@ -5,4 +5,5 @@ requests
 av
 numpy
 pytest
+pytest-html
 expecttest

@@ -1,5 +1,6 @@
 import torch
-from intel_visual_ai.dataset.imagenette import ImageNette
+import logging
+from samples.models.dataset.imagenette import ImageNette
 
 
 class Quantization:
@@ -13,7 +14,13 @@ class Quantization:
         calib_iters (int): Number of iterations for calibration.
     """
 
-    def __init__(self, device: str = "cpu", calib_iters: int = 10, dataset_path=None):
+    def __init__(
+        self,
+        device: str = "cpu",
+        calib_iters: int = 10,
+        dataset_path=None,
+        logger: logging.Logger | None = None,
+    ):
         """
         Initializes the Quantization class.
 
@@ -22,6 +29,7 @@ class Quantization:
             device (str): The device to use for calculations (e.g., 'cpu', 'cuda'). Defaults to 'cpu'.
             calib_iters (int): Number of iterations to use for calibration. Defaults to 10.
         """
+        self.logger = logger if logger is not None else logging.getLogger(__name__)
         self.imagenette = ImageNette(dataset_path=dataset_path)
         self.calibration_dataset = self.imagenette.prepare_calibration_dataloader(device=device)
         self.validation_dataset = self.calibration_dataset
@@ -51,8 +59,8 @@ class Quantization:
                 top5_pred = top5_pred.t()
                 correct_top5 += top5_pred.eq(labels.view(1, -1).expand_as(top5_pred)).sum().item()
 
-        print(f"Top 1 Accuracy: {100 * correct_top1 / total:.2f}%")
-        print(f"Top 5 Accuracy: {100 * correct_top5 / total:.2f}%")
+        self.logger.info(f"Top 1 Accuracy: {100 * correct_top1 / total:.2f}%")
+        self.logger.info(f"Top 5 Accuracy: {100 * correct_top5 / total:.2f}%")
 
     def quantize_int8(self, model_fp32_gpu: torch.nn.Module) -> torch.jit.ScriptModule:
         """
@@ -64,7 +72,7 @@ class Quantization:
         Returns:
             torch.jit.ScriptModule: The quantized model.
         """
-        print("[INFO] INT8 JIT Calibration")
+        self.logger.info("INT8 JIT Calibration")
         from torch.jit._recursive import wrap_cpp_module
         from torch.quantization.quantize_jit import convert_jit, prepare_jit
 
@@ -85,6 +93,6 @@ class Quantization:
                 if i == self.calib_iters - 1:
                     break
             modelJit = convert_jit(modelJit, True)
-            print("[INFO] Successfully quantized to INT8")
+            self.logger.info("Successfully quantized to INT8")
 
         return modelJit

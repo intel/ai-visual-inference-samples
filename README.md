@@ -3,15 +3,20 @@
 Intel® AI Visual Inference Samples are easy to use python* scripts implementations of workloads with media and AI inference pipelines. The samples are based on media and AI inference frameworks to demonstrate performance of Intel® Data Center GPU Flex Series. 
 
 ## Contents
+- [Releases](#releases)
 - [Requirements](#requirements)
 - [Known Isssues](#known-issues)
-- [Running Sample Applications using Docker](#running-sample-applications-using-docker)
+- [Running Sample Applications using Docker](docs/running-sample-apps.md)
 - [Measuring Performance with Intel® AI Visual Inference Samples](docs/measuring-performance-with-ai-vi-samples.md)
 - [Get Support](#get-support)
 - [License](#license)
 - [How to Contribute](#how-to-contribute)
 - [Security Policy](#security-policy)
 - [Code of Conduct](#code-of-conduct)
+
+## Releases
+Each release of the Intel® AI Visual Inference Samples provides samples for use with a single, specific AI Inference framework.  These samples are optimized for best performance with the configurations they are released with, and for best results it is recommended that you use the latest release intended for your preferred AI inference framework.  Target AI Inference framework can be easily identified by the string following the version number in the release tag, for example a release targeting pytorch may look like v0.5.0-**pytorch**.   
+If a specific update is required, you may use the tip of main, all samples from main will function as expected, but be aware optimal performance is not guaranteed.  
 
 ## Requirements
 
@@ -21,43 +26,13 @@ Intel® AI Visual Inference Samples are easy to use python* scripts implementati
 ### Hardware Requirements
 - Intel® Data Center GPU Flex Series on Intel® Xeon® platform hosts
 
+## Running Sample Applications using Docker
+Please refer to instructions [here](docs/running-sample-apps.md) on how to run sample applications.
+
+Please refer to instructions [here](docs/measuring-performance-with-ai-vi-samples.md) on how to measure performace using sample applications.
+
 ## Known Issues
 There are currently no known issues
-
-## Sample Application Usage
-
-Application usage and help can be accessed with any of the following command line options: '-?', '-h', '--help'.  This will provide a full list of command lines supported for the sample you are using and basic information on the sample.  
-
-## Running Sample Applications using Docker
-
-### Step 0: Install host drivers
-Install host drivers for Intel® Data Center GPU Flex Series according to the instructions [here](https://dgpu-docs.intel.com/driver/installation.html)
-
-### Step 1: Clone the repository
-Clone this repository locally
-```bash
-git clone --recursive <link to repo>
-```
-
-### Step 2: Build and Run Docker Container
-1. Build docker image:
-   ```bash
-   docker build -t ipex -f docker/Dockerfile.ipex .
-   ```
-
-2. Run docker container
-   ```bash
-   docker run -it --rm --device /dev/dri --group-add=$(stat -c "%g" /dev/dri/render* | head -1) ipex
-   ```
-
-### Step 3: Run the samples
-
-```bash
-cd samples/pytorch/<sample_name>
-# Skip next step if requirements.txt doesn't exist
-pip install -r requirements.txt
-python main.py
-```
 
 ## Get support
 

@@ -1,4 +1,4 @@
-from intel_visual_ai.dataset.dataset_base import DatasetBase
+from .dataset_base import DatasetBase
 from torch.utils.data import Dataset, DataLoader
 import torch
 from PIL import Image

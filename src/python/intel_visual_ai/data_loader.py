@@ -1,6 +1,11 @@
-import torch
 import intel_visual_ai
 import logging
+
+torch_available = True
+try:
+    import torch
+except ImportError:
+    torch_available = False
 
 
 class MediaDataLoader:
@@ -42,6 +47,12 @@ class MediaDataLoader:
         return self
 
     def __next__(self):
+        if torch_available:
+            return self._next_with_torch()
+        else:
+            return self._next_with_ov()
+
+    def _next_with_torch(self):
         processed_tensors = []
         decoded_tensors = []  # List to store all intermediate tensors
         if self.output_original_nv12:
@@ -79,10 +90,18 @@ class MediaDataLoader:
         else:
             return processed_tensor
 
+    def _next_with_ov(self):
+        # Placeholder for ov-specific implementation of __next__
+        raise NotImplementedError("MediaDataLoader iteration for ov is not implemented")
+
     def reset(self):
         self.video_reader = self._create_video_reader()
 
     @staticmethod
     def check_tensor_for_zeros(tensor):
-        # Check if the tensor contains only zeros
-        return torch.all(tensor == 0).item()
+        if torch_available:
+            # PyTorch-specific zero check
+            return torch.all(tensor == 0).item()
+        else:
+            # Placeholder for ov-specific zero check
+            raise NotImplementedError("Zero check for ov tensor is not implemented")

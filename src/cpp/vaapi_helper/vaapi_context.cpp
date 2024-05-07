@@ -2,77 +2,65 @@
 #include "unistd.h"
 #include <cassert>
 #include <fcntl.h>
+#include <iostream>
 
-VaApiContext::VaApiContext(VADisplay va_display) : _display(va_display) {
-    create_config_and_contexts();
-    create_supported_pixel_formats();
-
-    assert(_va_config_id != VA_INVALID_ID &&
-           "Failed to initalize VaApiContext. Expected valid VAConfigID.");
-    assert(_va_context_id != VA_INVALID_ID &&
-           "Failed to initalize VaApiContext. Expected valid VAContextID.");
-}
-
-VaApiContext::VaApiContext(std::string_view device) {
-    init_vaapi_objects(device);
-    create_config_and_contexts();
-    create_supported_pixel_formats();
-
-    assert(_va_config_id != VA_INVALID_ID &&
-           "Failed to initalize VaApiContext. Expected valid VAConfigID.");
-    assert(_va_context_id != VA_INVALID_ID &&
-           "Failed to initalize VaApiContext. Expected valid VAContextID.");
-}
-
-void VaApiContext::init_vaapi_objects(std::string_view device) {
-    // Silent vainfo
+VaDpyWrapper::Storage::Storage(std::string_view device) {
+    // Disabling libva info messages
     setenv("LIBVA_MESSAGING_LEVEL", "1", 1);
 
-    // Init VADisplay
-    drm_fd_ = open(device.data(), O_RDWR);
-    if (drm_fd_ < 0)
+    drm_fd = open(device.data(), O_RDWR);
+    if (drm_fd < 0)
         throw std::runtime_error("Failed to open device: " + std::string(device));
-    auto va_display_ = vaGetDisplayDRM(drm_fd_);
+    display = vaGetDisplayDRM(drm_fd);
     int major, minor;
-    auto status = vaInitialize(va_display_, &major, &minor);
+    auto status = vaInitialize(display, &major, &minor);
     if (status != VA_STATUS_SUCCESS)
         throw std::runtime_error("vaInitialize failed, " + std::to_string(status));
-    _display = VaDpyWrapper(va_display_);
+}
+
+VaDpyWrapper::Storage::~Storage() {
+    if (display) {
+        auto status = vaTerminate(display);
+        if (status != VA_STATUS_SUCCESS)
+            std::cout << "vaTerminate failed. Status: " << std::to_string(status) << "\n";
+    }
+    if (drm_fd >= 0)
+        close(drm_fd);
+}
+
+VaApiContext::VaApiContext(VaDpyWrapper va_display) : _display(va_display) {
+    create_config_and_contexts();
+    create_supported_pixel_formats();
+
+    assert(_va_config_id != VA_INVALID_ID &&
+           "Failed to initalize VaApiContext. Expected valid VAConfigID.");
+    assert(_va_context_id != VA_INVALID_ID &&
+           "Failed to initalize VaApiContext. Expected valid VAContextID.");
 }
 
 VaApiContext::~VaApiContext() {
-    auto vtable = _display.drvVtable();
-    auto ctx = _display.drvCtx();
-
     if (_va_context_id != VA_INVALID_ID) {
-        vtable.vaDestroyContext(ctx, _va_context_id);
+        vaDestroyContext(_display.native(), _va_context_id);
     }
 
     if (_va_config_id != VA_INVALID_ID) {
-        vtable.vaDestroyConfig(ctx, _va_config_id);
-    }
-    if (drm_fd_ >= 0) {
-        close(drm_fd_);
+        vaDestroyConfig(_display.native(), _va_config_id);
     }
 }
 
-VAContextID VaApiContext::Id() const {
+VAContextID VaApiContext::id_native() const {
     return _va_context_id;
 }
 
-VaDpyWrapper VaApiContext::Display() const {
+const VaDpyWrapper& VaApiContext::display() const {
     return _display;
 }
 
-VADisplay VaApiContext::DisplayRaw() const {
-    return _display.raw();
+VADisplay VaApiContext::display_native() const {
+    return _display.native();
 }
 
-int VaApiContext::RTFormat() const {
-    return _rt_format;
-}
-
-bool VaApiContext::IsPixelFormatSupported(int format) const {
+bool VaApiContext::is_pixel_format_supported(int format) const {
     return _supported_pixel_formats.count(format);
 }
 
@@ -90,13 +78,10 @@ bool VaApiContext::IsPixelFormatSupported(int format) const {
 void VaApiContext::create_config_and_contexts() {
     assert(_display);
 
-    auto ctx = _display.drvCtx();
-    auto vtable = _display.drvVtable();
-
     VAConfigAttrib format_attrib;
     format_attrib.type = VAConfigAttribRTFormat;
-    auto status =
-        vtable.vaGetConfigAttributes(ctx, VAProfileNone, VAEntrypointVideoProc, &format_attrib, 1);
+    auto status = vaGetConfigAttributes(_display.native(), VAProfileNone, VAEntrypointVideoProc,
+                                        &format_attrib, 1);
     if (status != VA_STATUS_SUCCESS)
         throw std::runtime_error("vaGetConfigAttributes failed, " + std::to_string(status));
 
@@ -107,8 +92,8 @@ void VaApiContext::create_config_and_contexts() {
     attrib.type = VAConfigAttribRTFormat;
     attrib.value = _rt_format;
 
-    status = vtable.vaCreateConfig(ctx, VAProfileNone, VAEntrypointVideoProc, &attrib, 1,
-                                   &_va_config_id);
+    status = vaCreateConfig(_display.native(), VAProfileNone, VAEntrypointVideoProc, &attrib, 1,
+                            &_va_config_id);
     if (status != VA_STATUS_SUCCESS)
         throw std::runtime_error("vaCreateConfig failed, " + std::to_string(status));
 
@@ -117,8 +102,11 @@ void VaApiContext::create_config_and_contexts() {
             "Could not create VA config. Cannot initialize VaApiContext without VA config.");
     }
 
-    status = vtable.vaCreateContext(ctx, _va_config_id, 1, 1, VA_PROGRESSIVE, nullptr, 0,
-                                    &_va_context_id);
+    // We use width=1 and height=1 as defaults, because width=0 and height=0 causes permanent device
+    // busy on WSL. In general these parameters should not affect anything for Video Processing
+    // Context
+    status = vaCreateContext(_display.native(), _va_config_id, 1, 1, VA_PROGRESSIVE, nullptr, 0,
+                             &_va_context_id);
     if (status != VA_STATUS_SUCCESS)
         throw std::runtime_error("vaCreateContext failed, " + std::to_string(status));
 
@@ -139,12 +127,9 @@ void VaApiContext::create_config_and_contexts() {
 void VaApiContext::create_supported_pixel_formats() {
     assert(_display);
 
-    auto ctx = _display.drvCtx();
-    auto vtable = _display.drvVtable();
-
-    std::vector<VAImageFormat> image_formats(ctx->max_image_formats);
+    std::vector<VAImageFormat> image_formats(vaMaxNumImageFormats(_display.native()));
     int size = 0;
-    auto status = vtable.vaQueryImageFormats(ctx, image_formats.data(), &size);
+    auto status = vaQueryImageFormats(_display.native(), image_formats.data(), &size);
     if (status != VA_STATUS_SUCCESS)
         throw std::runtime_error("vaQueryImageFormats failed, " + std::to_string(status));
 

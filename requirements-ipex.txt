@@ -1,4 +1,5 @@
 -r requirements-base.txt
+pillow
 
 # IPEX
 -f https://developer.intel.com/ipex-whl-stable-xpu

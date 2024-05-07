@@ -2,8 +2,11 @@ import os
 import requests
 import tarfile
 import logging
+from pathlib import Path
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
+
+DATASETS_DIR = Path(__file__).parent.parent.parent.parent / "data" / "datasets"
 
 
 class TqdmLoggingHandler(logging.Handler):
@@ -19,7 +22,7 @@ class TqdmLoggingHandler(logging.Handler):
 
 
 # Configure logging
-logger = logging.getLogger("dataset")
+logger = logging.getLogger("visual_ai.dataset")
 logger.addHandler(TqdmLoggingHandler())
 
 
@@ -48,8 +51,8 @@ class DatasetBase:
         dataset_tar_filename: str,
         dataset_label_filename: str,
         dataset_label_url: str,
-        dataset_path: str,
         quantization_batch_size: int,
+        dataset_path: Path | None = None,
         no_proxy: str = None,
     ):
         """
@@ -67,12 +70,8 @@ class DatasetBase:
         self.dataset_url = dataset_url
         self._dataset_tar_filename = dataset_tar_filename
         self.quantization_batch_size = quantization_batch_size
-        self.dataset_path = dataset_path or os.path.join(os.path.dirname(__file__), dataset_name)
+        self.dataset_path = dataset_path or DATASETS_DIR / dataset_name
         self.dataset_label_url = dataset_label_url
-        if no_proxy:
-            os.environ["no_proxy"] = no_proxy
-            logger.info(f"Proxy exclusion set for: {no_proxy}")
-
         # Initialize full paths for the dataset tar file and labels file
         self._tar_file_path = os.path.join(self.dataset_path, self._dataset_tar_filename)
         self._dataset_label_filename = None

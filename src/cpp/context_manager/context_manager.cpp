@@ -16,15 +16,13 @@ std::shared_ptr<L0Context> ContextManager::get_l0_context(const uint32_t device)
     return new_l0_context;
 }
 
-std::shared_ptr<VaApiContext> ContextManager::get_va_context(const std::string& device) {
-    auto it = vaapi_contexts_.find(device);
-    if (it != vaapi_contexts_.end()) {
+VaDpyWrapper ContextManager::get_va_display(const std::string& device) {
+    auto it = vaapi_display_wrappers_.find(device);
+    if (it != vaapi_display_wrappers_.end()) {
         return it->second;
     }
-    // Create VAAPI context for the device
-    std::shared_ptr<VaApiContext> new_va_api_context = std::make_shared<VaApiContext>(device);
-    vaapi_contexts_[device] = new_va_api_context;
-    return new_va_api_context;
+    vaapi_display_wrappers_[device] = VaDpyWrapper(device);
+    return vaapi_display_wrappers_[device];
 }
 
 std::string ContextManager::get_device_path_from_device_name(const std::string& device_name) {

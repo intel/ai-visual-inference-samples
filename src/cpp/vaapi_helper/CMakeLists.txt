@@ -28,6 +28,7 @@ target_link_libraries(${TARGET_NAME}
 PUBLIC
     ${VA_LIBRARIES}
     utils
+    visual_ai_include
 PRIVATE
     ${OpenCV_LIBS}
     ${VADRM_LIBRARIES}

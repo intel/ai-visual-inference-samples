@@ -16,7 +16,9 @@ PUBLIC
 # Link against the required libraries
 target_link_libraries(${TARGET_NAME} PRIVATE
     pybind11::pybind11
+    visual_ai_include
     xpudecoder
     vaapi_helper
     utils
+    frametransform
 )

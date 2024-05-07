@@ -1,8 +1,14 @@
 from multiprocessing import Process, Queue
-from PIL import Image
-import torch
 import logging
 import importlib
+
+# Flag for PyTorch availability
+torch_available = True
+try:
+    import torch
+    from PIL import Image
+except ImportError:
+    torch_available = False
 
 
 class VideoWriter:
@@ -34,18 +40,24 @@ class VideoWriter:
         Returns:
         PIL.Image: The converted PIL Image.
         """
-        # Move tensor to CPU and convert to uint8 if necessary
-        tensor = tensor.cpu()
-        if tensor.dtype == torch.float16:
-            tensor = (tensor.to(torch.float32) * 255).type(torch.uint8)
-        elif tensor.dtype == torch.float32:
-            tensor = (tensor * 255).type(torch.uint8)
+        if torch_available:
+            # PyTorch-specific conversion
+            # Move tensor to CPU and convert to uint8 if necessary
+            tensor = tensor.cpu()
+            if tensor.dtype == torch.float16:
+                tensor = (tensor.to(torch.float32) * 255).type(torch.uint8)
+            elif tensor.dtype == torch.float32:
+                tensor = (tensor * 255).type(torch.uint8)
 
-        # Convert to NumPy array and transpose to (H, W, C) format
-        np_array = tensor.numpy().transpose(1, 2, 0)
+            # Convert to NumPy array and transpose to (H, W, C) format
+            np_array = tensor.numpy().transpose(1, 2, 0)
 
-        # Convert to PIL Image
-        return Image.fromarray(np_array)
+            # Convert to PIL Image
+            return Image.fromarray(np_array)
+
+        else:
+            # Placeholder for OV-specific conversion
+            raise NotImplementedError("Conversion from OV tensor to PIL Image is not implemented")
 
 
 class CpuVideoWriter(VideoWriter):
