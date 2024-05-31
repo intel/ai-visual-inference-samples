@@ -4,6 +4,7 @@
 #include <assert.h>
 
 #include "visual_ai/frame.hpp"
+#include "visual_ai/system_frame.hpp"
 
 struct FrameDescription {
     uint32_t format = 0; // FourCC
@@ -31,12 +32,13 @@ struct VaApiFrame : public Frame {
 
     // Implement deep copy of VaSurface only
     static std::unique_ptr<VaApiFrame> copy_from(const VaApiFrame& other);
+    std::unique_ptr<SystemFrame> copy_to_system();
 
     // Checks if surface status is "ready"
     bool is_ready() const;
 
     // Performs surface synchronization
-    void sync() const;
+    void sync() const override;
 };
 
 // Thin wrapper around raw VaApiFrame pointer.

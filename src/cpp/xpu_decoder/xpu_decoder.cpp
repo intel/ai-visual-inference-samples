@@ -9,13 +9,17 @@
 #include "l0_context.hpp"
 #include "l0_utils.hpp"
 #include "usm_frame.hpp"
+#include "visual_ai/system_frame.hpp"
 #include "context_manager.hpp"
 #include "vaapi_context.hpp"
 #include "vaapi_utils.hpp"
 #include "vaapi_frame_converter.hpp"
 #include "logger.hpp"
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <pybind11/embed.h> // everything needed for embedding
+#include <pybind11/stl.h>
+#include <pybind11/numpy.h>
 #include "dlpack/dlpack.h"
 #include "visual_ai/memory_format.hpp"
 #include "scope_guard.hpp"
@@ -35,6 +39,32 @@ extern "C" {
 }
 
 namespace py = pybind11;
+
+namespace {
+
+VASurfaceID vasurface_of_avframe(const AVFrame& avframe) {
+    return static_cast<VASurfaceID>(reinterpret_cast<uintptr_t>(avframe.data[3]));
+}
+
+#ifdef ENABLE_FF_PREPROC
+
+AVFrame* avframe_extract_sub_frame(const AVFrame& avframe) {
+    auto sd = av_frame_get_side_data(&avframe, AV_FRAME_DATA_SUB_FRAME);
+    if (!sd)
+        return nullptr;
+    return reinterpret_cast<AVFrame*>(sd->data);
+}
+
+#else // !ENABLE_FF_PREPROC
+
+AVFrame* avframe_extract_sub_frame(const AVFrame& /*avframe*/) {
+    Logger().error("Trying to extract sub-frame while library was built without it");
+    return nullptr;
+}
+
+#endif // ENABLE_FF_PREPROC
+
+} // namespace
 
 struct SharedTensor : DLManagedTensor {
     std::shared_ptr<UsmFrame> usm_frame;
@@ -70,11 +100,46 @@ struct SharedTensor : DLManagedTensor {
 // Decode & process result: 0 - processed frame, 1 - original frame, 2 - dynamically allocated
 using DecProcResult = std::tuple<std::unique_ptr<VaApiFrame>, std::unique_ptr<VaApiFrame>, bool>;
 
+struct XpuDecoderConfig {
+    // Resize in decoder. 0, 0 means no resize
+    std::tuple<int, int> out_img_size = {0, 0};
+
+    // Number of pre-allocated surfaces for VPP
+    uint32_t pool_size = 0;
+
+    // Output memory format
+    MemoryFormat format = MemoryFormat::pt_planar_rgbp;
+
+    // Batch size. Surface synchronization is called once per batch
+    size_t batch_size = 0;
+
+    // Asynchronous decoding depth. Number of frames, 0 = synchronous decoding
+    size_t async_depth = 0;
+
+    // Preprocessing using Fixed Functions (fuses decode & resize operation)
+    bool ff_preproc = false;
+
+    // Return original (decoded) frame in NV12 format in addition to processed frame
+    bool out_orig_nv12 = false;
+
+    // Endless playing of input media
+    bool loop_mode = false;
+};
+
 class XpuDecoder {
   public:
-    XpuDecoder(const std::string& filename);
-    XpuDecoder(const std::string& filename, const std::string& device_name);
-    XpuDecoder(const std::string& filename, VaApiContextPtr va_context, L0ContextPtr l0_context);
+#ifdef ENABLE_FF_PREPROC
+    static bool is_ff_preproc_supported() { return true; }
+#else
+    static bool is_ff_preproc_supported() { return false; }
+#endif
+
+    XpuDecoder(const std::string& filename) : XpuDecoder(filename, "xpu") {}
+    XpuDecoder(const std::string& filename, const std::string& device_name)
+        : XpuDecoder(filename, device_name, XpuDecoderConfig{}) {}
+    XpuDecoder(const std::string& filename, const std::string& device_name, XpuDecoderConfig cfg);
+    XpuDecoder(const std::string& filename, VaApiContextPtr va_context, L0ContextPtr l0_context,
+               XpuDecoderConfig cfg);
     XpuDecoder(const XpuDecoder&) = delete;
     XpuDecoder(XpuDecoder&&);
     XpuDecoder& operator=(const XpuDecoder&) = delete;
@@ -83,16 +148,8 @@ class XpuDecoder {
 
     XpuDecoder get_iterator();
     std::pair<py::object, std::unique_ptr<VaApiFrame>> get_next_frame();
-    void set_memory_format(MemoryFormat format);
-    void set_output_resolution(int width, int height);
-    void set_async_depth(int depth);
     const VaDpyWrapper& get_va_device() const { return va_context_->display(); }
-    void set_frame_pool_params(uint32_t pool_size) { preproc_->set_pool_size(pool_size); }
-    void set_loop_mode(bool loop_video) { loop_mode_ = loop_video; }
-    void set_output_original_nv12(bool output_original_nv12) {
-        output_original_nv12_ = output_original_nv12;
-    }
-    void set_batch_size(size_t batch_size) { batch_size_ = batch_size; }
+    void set_loop_mode(bool loop_video) { config_.loop_mode = loop_video; }
     std::tuple<uint32_t, uint32_t> get_original_size() {
         if (codecpar_)
             return {codecpar_->width, codecpar_->height};
@@ -101,7 +158,6 @@ class XpuDecoder {
 
   private:
     Logger logger_;
-    size_t batch_size_ = 1;
     size_t processed_frames_counter_ = 0;
     AVFormatContext* input_ctx_ = nullptr;
     AVCodecContext* decoder_ctx_ = nullptr;
@@ -115,13 +171,9 @@ class XpuDecoder {
     VaApiContextPtr va_context_;
     std::shared_ptr<VaApiFrameConverter> preproc_;
 
-    MemoryFormat memory_format_ = MemoryFormat::unknown;
+    XpuDecoderConfig config_;
 
-    bool loop_mode_ = false;
-    bool output_original_nv12_ = false;
     bool resource_owner_ = false; // true means that current instance of the class owns resources
-
-    int async_depth_ = 0; // default to synchronous decoding
 
     std::thread decode_thread_;
 
@@ -143,6 +195,7 @@ class XpuDecoder {
 
     void init_ffmpeg(const std::string& filename);
     AVCodecContext* configure_decoder_context(const AVCodec* codec, AVCodecParameters* codecpar);
+    void configure_decoder_ff_preproc(AVCodecContext* decoder_ctx, AVCodecParameters* codecpar);
 
     std::shared_ptr<UsmFrame> vaapi_to_usm(std::unique_ptr<VaApiFrame> vaframe, bool sync_frame);
     std::shared_ptr<UsmFrame> vaapi_to_usm_cached(std::unique_ptr<VaApiFrame> vaframe,
@@ -157,23 +210,24 @@ class XpuDecoder {
 };
 
 void XpuDecoder::lazy_init() {
-    if (async_depth_ == 0 || decode_thread_active()) {
+    if (config_.async_depth == 0 || decode_thread_active()) {
         return;
     }
 
     decode_thread_ = std::thread(&XpuDecoder::decode_routine, this);
-    logger_.debug("Decode thread started, depth={}", async_depth_);
+    logger_.debug("Decode thread started, depth={}", config_.async_depth);
 }
 
 void XpuDecoder::decode_routine() {
+    const auto async_depth = config_.async_depth;
     while (!stop_decoding_) {
         // Locked section
         {
             std::unique_lock<std::mutex> lock(decode_mutex_);
-            if (frame_queue_.size() >= async_depth_)
+            if (frame_queue_.size() >= async_depth)
                 // wait for free slot in queue
                 need_frame_.wait(
-                    lock, [&] { return frame_queue_.size() < async_depth_ || stop_decoding_; });
+                    lock, [&] { return frame_queue_.size() < async_depth || stop_decoding_; });
         }
 
         auto opt_result = decode_and_process_next_frame();
@@ -186,24 +240,29 @@ void XpuDecoder::decode_routine() {
     }
 }
 
-XpuDecoder::XpuDecoder(const std::string& filename)
-    : XpuDecoder(filename,
-                 std::make_shared<VaApiContext>(
-                     ContextManager::get_instance().get_va_display("/dev/dri/renderD128")),
-                 ContextManager::get_instance().get_l0_context(0)) {
-}
-
-XpuDecoder::XpuDecoder(const std::string& filename, const std::string& device_name)
+XpuDecoder::XpuDecoder(const std::string& filename, const std::string& device_name,
+                       XpuDecoderConfig cfg)
     : XpuDecoder(filename,
                  std::make_shared<VaApiContext>(ContextManager::get_instance().get_va_display(
                      ContextManager::get_device_path_from_device_name(device_name))),
                  ContextManager::get_instance().get_l0_context(
-                     ContextManager::get_ze_device_id(device_name))) {
+                     ContextManager::get_ze_device_id(device_name)),
+                 cfg) {
 }
 
 XpuDecoder::XpuDecoder(const std::string& filename, VaApiContextPtr va_context,
-                       L0ContextPtr l0_context)
-    : va_context_(va_context), resource_owner_(true), l0_context_(l0_context) {
+                       L0ContextPtr l0_context, XpuDecoderConfig cfg)
+    : va_context_(va_context), resource_owner_(true), l0_context_(l0_context), config_(cfg) {
+
+    if (config_.async_depth > 1024)
+        throw std::invalid_argument("async_depth cannot exceed 1024");
+
+    if (config_.format == MemoryFormat::unknown)
+        throw std::invalid_argument("format cannot be set to unknown");
+
+    // Note: It's script responsibility to set required pool size
+    if (!config_.pool_size)
+        config_.pool_size = std::max({config_.batch_size, config_.async_depth, size_t(128)});
 
     init_ffmpeg(filename);
     ze_context_ = l0_context_->get_ze_context();
@@ -213,11 +272,31 @@ XpuDecoder::XpuDecoder(const std::string& filename, VaApiContextPtr va_context,
     // Set output resolution to match video resolution. (Meaning no preprocessing by default for OV
     // case) preproc can be customized by calling set_ methods TODO maybe rename preproc_set_ ?
     preproc_ = std::make_shared<VaApiFrameConverter>(va_context_);
-    set_output_resolution(codecpar_->width, codecpar_->height);
-    set_memory_format(MemoryFormat::pt_planar_rgbp);
 
-    // Note: It's script responsibility to set required pool size
-    set_frame_pool_params(128);
+    auto [output_width, output_height] = config_.out_img_size;
+    if (!output_width || !output_height) {
+        output_width = codecpar_->width;
+        output_height = codecpar_->height;
+    }
+
+    // Configure VPP
+    const uint32_t va_color_fmt = memory_format_to_fourcc(config_.format);
+    preproc_->set_output_color_format(va_color_fmt);
+    preproc_->set_ouput_resolution(output_width, output_height);
+    preproc_->set_pool_size(config_.pool_size);
+
+    logger_.debug("Created XpuDecoder with:\n"
+                  "    output image size: {}x{}\n"
+                  "    batch size: {}        \n"
+                  "    pool size: {}         \n"
+                  "    async depth: {}       \n"
+                  "    memory format: {}     \n"
+                  "    loop mode: {}         \n"
+                  "    ff preprocessing: {}  \n"
+                  "    output orignal NV12: {}\n",
+                  output_width, output_height, config_.batch_size, config_.pool_size,
+                  config_.async_depth, config_.format, config_.loop_mode, config_.ff_preproc,
+                  config_.out_orig_nv12);
 }
 
 XpuDecoder::XpuDecoder(XpuDecoder&& other) {
@@ -234,13 +313,9 @@ XpuDecoder::XpuDecoder(XpuDecoder&& other) {
 
     va_context_ = other.va_context_;
 
+    config_ = other.config_;
+
     preproc_ = std::move(other.preproc_);
-
-    memory_format_ = other.memory_format_;
-
-    loop_mode_ = other.loop_mode_;
-
-    async_depth_ = other.async_depth_;
 
     // transfer resource ownership
     resource_owner_ = other.resource_owner_;
@@ -302,6 +377,10 @@ AVCodecContext* XpuDecoder::configure_decoder_context(const AVCodec* codec,
     avcodec_parameters_to_context(decoder_ctx, codecpar);
     decoder_ctx->pix_fmt = AV_PIX_FMT_VAAPI;
 
+    // Try to configure fixed function preprocessing (fused processing) if requested
+    if (config_.ff_preproc)
+        configure_decoder_ff_preproc(decoder_ctx, codecpar);
+
     AVBufferRef* hw_device_ctx = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_VAAPI);
     auto* hwctx = reinterpret_cast<AVHWDeviceContext*>(hw_device_ctx->data);
     auto* vactx = static_cast<AVVAAPIDeviceContext*>(hwctx->hwctx);
@@ -338,6 +417,49 @@ AVCodecContext* XpuDecoder::configure_decoder_context(const AVCodec* codec,
     return decoder_ctx;
 }
 
+#ifdef ENABLE_FF_PREPROC
+
+// Configure sub-frame options (fixed functions preprocessing) for decoder
+void XpuDecoder::configure_decoder_ff_preproc(AVCodecContext* decoder_ctx,
+                                              AVCodecParameters* codecpar) {
+    // Due to ffmpeg limitations 'resize in decode' to sizes lower than 1:8 of original size fails.
+    // Right now 'resize in decode' feature works only with hevc decoder
+    const auto [imgw, imgh] = config_.out_img_size;
+    // Round-up division
+    const auto ratiow = imgw ? codecpar->width / imgw + (codecpar->width % imgw != 0) : 0;
+    const auto ratioh = imgh ? codecpar->height / imgh + (codecpar->height % imgh != 0) : 0;
+    const auto inside = [](auto val, auto lo, auto hi) { return lo < val && val < hi; };
+    const bool can_use = config_.ff_preproc && codecpar->codec_id == AV_CODEC_ID_HEVC &&
+                         inside(ratiow, 1, 9) && inside(ratioh, 1, 9);
+    if (can_use) {
+        decoder_ctx->export_side_data |= AV_CODEC_EXPORT_DATA_SUB_FRAME;
+        int err = av_dict_set_int(&decoder_ctx->sub_frame_opts, "width", imgw, 0);
+        if (err >= 0)
+            err = av_dict_set_int(&decoder_ctx->sub_frame_opts, "height", imgh, 0);
+        if (err >= 0)
+            err = av_dict_set(&decoder_ctx->sub_frame_opts, "format", "nv12", 0);
+        if (err < 0)
+            throw std::runtime_error(
+                "Failed to set sub-frame options for fixed functions preprocessing");
+        logger_.debug("Sub-frame options are set: {}x{}", imgw, imgh);
+    } else if (config_.ff_preproc) {
+        logger_.warn("Preprocessing on fixed functions was requested but is not supported for "
+                     "requested decoder parameters");
+        config_.ff_preproc = false;
+    }
+}
+
+#else // !ENABLE_FF_PREPROC
+
+// Configure sub-frame options (fixed functions preprocessing) for decoder
+void XpuDecoder::configure_decoder_ff_preproc(AVCodecContext* /*decoder_ctx*/,
+                                              AVCodecParameters* /*codecpar*/) {
+    logger_.warn("Preprocessing on fixed functions was requested but library was built without it");
+    config_.ff_preproc = false;
+}
+
+#endif // ENABLE_FF_PREPROC
+
 static void check_va_status(VAStatus sts, const char* msg) {
     if (sts != VA_STATUS_SUCCESS) {
         throw std::runtime_error(std::string(msg) + " failed: " + std::to_string(sts));
@@ -370,10 +492,10 @@ std::pair<py::object, std::unique_ptr<VaApiFrame>> XpuDecoder::get_next_frame() 
         throw py::stop_iteration();
     }
 
-    lazy_init(); // sets "async_depth_" to zero for OV case
+    lazy_init();
 
     std::optional<DecProcResult> opt_result;
-    if (async_depth_ == 0) {
+    if (config_.async_depth == 0) {
         // synchronous decoding
         opt_result = decode_and_process_next_frame();
     } else {
@@ -451,7 +573,7 @@ std::optional<DecProcResult> XpuDecoder::decode_and_process_next_frame() {
     auto avf_deleter = make_scope_guard([&]() { av_frame_free(&avframe); });
 
     bool end_of_file = !get_next_av_frame(avframe);
-    if (end_of_file && loop_mode_) {
+    if (end_of_file && config_.loop_mode) {
         const int ret = av_seek_frame(input_ctx_, video_stream_, 0, AVSEEK_FLAG_FRAME);
         avcodec_flush_buffers(decoder_ctx_);
         if (ret >= 0)
@@ -464,35 +586,45 @@ std::optional<DecProcResult> XpuDecoder::decode_and_process_next_frame() {
         return {};
 
     // Frame processing
-    auto vasurface = static_cast<VASurfaceID>(reinterpret_cast<uintptr_t>(avframe->data[3]));
-
     // false => doesn't own surface
-    VaApiFrame vaframe(va_context_->display_native(), vasurface, avframe->width, avframe->height,
-                       VA_FOURCC_NV12, false);
+    VaApiFrame vaframe(va_context_->display_native(), vasurface_of_avframe(*avframe),
+                       avframe->width, avframe->height, VA_FOURCC_NV12, false);
 
-    // Full frame
-    VARectangle region = {.x = int16_t(0),
-                          .y = int16_t(0),
-                          .width = vaframe.desc.width,
-                          .height = vaframe.desc.height};
-    auto [processed_frame, dyn_alloc] = preproc_->convert_ex(vaframe, region, false);
+    std::unique_ptr<VaApiFrame> processed_frame;
+    bool is_dyn_alloc = false;
+    if (config_.ff_preproc) {
+        // Extract sub-frame
+        const AVFrame* sub_avframe = avframe_extract_sub_frame(*avframe);
+        if (!sub_avframe)
+            throw std::runtime_error("Failed to get sub-frame of original frame");
+
+        // false => doesn't own surface
+        VaApiFrame sub_vaframe(va_context_->display_native(), vasurface_of_avframe(*sub_avframe),
+                               sub_avframe->width, sub_avframe->height, VA_FOURCC_NV12, false);
+
+        // Additional CSC might be required if target format is not NV12
+        if (config_.format != MemoryFormat::ov_planar_nv12) {
+            std::tie(processed_frame, is_dyn_alloc) = preproc_->convert_ex(sub_vaframe, false);
+        } else {
+            // TODO: try to use frame pool inside preproc_ ?
+            processed_frame = VaApiFrame::copy_from(sub_vaframe);
+        }
+    } else {
+        std::tie(processed_frame, is_dyn_alloc) = preproc_->convert_ex(vaframe, false);
+    }
 
     std::unique_ptr<VaApiFrame> nv12_copy;
-    if (output_original_nv12_)
+    if (config_.out_orig_nv12)
         nv12_copy = VaApiFrame::copy_from(vaframe);
 
-    return DecProcResult{std::move(processed_frame), std::move(nv12_copy), dyn_alloc};
+    return DecProcResult{std::move(processed_frame), std::move(nv12_copy), is_dyn_alloc};
 }
 
 py::object XpuDecoder::export_frame_to_python(std::unique_ptr<VaApiFrame> vaframe,
                                               bool allow_cache) {
-    if (memory_format_ == MemoryFormat::ov_planar_nv12) {
+    if (config_.format == MemoryFormat::ov_planar_nv12) {
         return pybind11::cast(std::move(vaframe));
     }
-
-    //
-    // PyTorch + IPEX w/USM memory
-    //
 
     /*
      * WARNING: Surface synchronization is done only ONCE per batch.
@@ -503,10 +635,20 @@ py::object XpuDecoder::export_frame_to_python(std::unique_ptr<VaApiFrame> vafram
      * As a future improvement, consider rewriting the decoder so it returns a tensor
      * for the entire batch, rather than on a per-frame basis.
      */
-    const bool sync_surface = ++processed_frames_counter_ >= batch_size_;
+    const bool sync_surface = ++processed_frames_counter_ >= config_.batch_size;
     if (sync_surface)
         processed_frames_counter_ = 0;
 
+    if (config_.format == MemoryFormat::system_rgbp) {
+        auto system_frame = vaframe->copy_to_system();
+        if (sync_surface)
+            system_frame->sync();
+        return pybind11::cast(std::move(system_frame));
+    }
+
+    //
+    // PyTorch + IPEX w/USM memory
+    //
     // transfers ownership of vaframe to usm_frame (i.e. vaframe is invalid after this call)
     std::shared_ptr<UsmFrame> usm_frame;
     if (allow_cache)
@@ -570,7 +712,7 @@ std::shared_ptr<UsmFrame> XpuDecoder::vaapi_to_usm(std::unique_ptr<VaApiFrame> v
 
     usm_frame->offset = prime_desc.layers->offset[0];
 
-    if (memory_format_ == MemoryFormat::pt_planar_rgbp) {
+    if (config_.format == MemoryFormat::pt_planar_rgbp) {
         usm_frame->shape = {3, prime_desc.height, prime_desc.width};
         usm_frame->strides = {prime_desc.layers->pitch[0] * prime_desc.height,
                               prime_desc.layers->pitch[0], 1};
@@ -606,43 +748,6 @@ std::shared_ptr<UsmFrame> XpuDecoder::vaapi_to_usm_cached(std::unique_ptr<VaApiF
 
 XpuDecoder XpuDecoder::get_iterator() {
     return std::move(*this);
-}
-
-void XpuDecoder::set_memory_format(MemoryFormat format) {
-    if (format == MemoryFormat::unknown)
-        throw std::invalid_argument("format cannot be set to unknown");
-
-    assert(preproc_);
-
-    if (decode_thread_active()) {
-        throw std::runtime_error("coud not change memory format because decoder is running");
-    }
-
-    const uint32_t va_color_fmt = memory_format_to_fourcc(format);
-
-    preproc_->set_output_color_format(va_color_fmt);
-    memory_format_ = format;
-}
-
-void XpuDecoder::set_output_resolution(int width, int height) {
-    if (decode_thread_active()) {
-        throw std::runtime_error("coud not change output resolution because decoder is running");
-    }
-
-    preproc_->set_ouput_resolution(width, height);
-}
-
-void XpuDecoder::set_async_depth(int depth) {
-    if (decode_thread_active()) {
-        throw std::runtime_error("coud not change async depth because decoder is running");
-    }
-
-    // sanity check
-    if (depth < 0 || depth > 1024) {
-        throw std::runtime_error("wrong async depth");
-    }
-
-    async_depth_ = depth;
 }
 
 // Video reader uses simplified approach to create iterator - returns itself as an iterator. This
@@ -687,6 +792,16 @@ void pybind11_submodule_videoreader(py::module_& parent_module) {
             return oss.str();
         });
 
+    py::class_<SystemFrame, std::unique_ptr<SystemFrame>>(m, "SystemFrame", py::buffer_protocol())
+        .def_buffer([](SystemFrame& f) -> py::buffer_info {
+            return py::buffer_info(f.raw(), sizeof(uint8_t),
+                                   py::format_descriptor<uint8_t>::format(), 3, f.shape, f.strides);
+        })
+        .def("__repr__", [](SystemFrame& f) {
+            return py::str("<libvideoreader.SystemFrame ptr={:#08x}, shape={}, strides={}>")
+                .format(reinterpret_cast<uintptr_t>(f.raw()), f.shape, f.strides);
+        });
+
     py::class_<VaDpyWrapper>(m, "VaDpyWrapper")
         .def("native", &VaDpyWrapper::native)
         .def("__repr__", [](const VaDpyWrapper& self) {
@@ -695,18 +810,70 @@ void pybind11_submodule_videoreader(py::module_& parent_module) {
                << std::dec << '>';
             return ss.str();
         });
+
+    py::class_<XpuDecoderConfig>(m, "XpuDecoderConfig")
+        .def(
+            py::init([](std::optional<std::tuple<int, int>> out_img_size, uint32_t pool_size,
+                        MemoryFormat format, size_t batch_size, size_t async_depth, bool ff_preproc,
+                        bool out_orig_nv12, bool loop_mode, const py::kwargs& kwargs) {
+                if (!kwargs.empty()) {
+                    Logger().warn(
+                        "Got unconsumed fields in kwargs={} when creating XpuDecoderConfig",
+                        kwargs);
+                }
+
+                return XpuDecoderConfig{.out_img_size =
+                                            out_img_size.value_or(XpuDecoderConfig().out_img_size),
+                                        .pool_size = pool_size,
+                                        .format = format,
+                                        .batch_size = batch_size,
+                                        .async_depth = async_depth,
+                                        .ff_preproc = ff_preproc,
+                                        .out_orig_nv12 = out_orig_nv12,
+                                        .loop_mode = loop_mode};
+            }),
+            py::arg("out_img_size") = py::none(),
+            py::arg("pool_size") = XpuDecoderConfig().pool_size,
+            py::arg("memory_format") = XpuDecoderConfig().format,
+            py::arg("batch_size") = XpuDecoderConfig().batch_size,
+            py::arg("async_depth") = XpuDecoderConfig().async_depth,
+            py::arg("ff_preproc") = XpuDecoderConfig().ff_preproc,
+            py::arg("output_original_nv12") = XpuDecoderConfig().out_orig_nv12,
+            py::arg("loop_mode") = XpuDecoderConfig().loop_mode)
+        .def_readwrite(
+            "out_img_size", &XpuDecoderConfig::out_img_size,
+            "Enable resize in decoder. The (0, 0) means no resize i.e. return image in original "
+            "video resolution")
+        .def_readwrite("pool_size", &XpuDecoderConfig::pool_size,
+                       "Number of pre-allocated surfaces for VPP")
+        .def_readwrite("memory_format", &XpuDecoderConfig::format, "Output memory format")
+        .def_readwrite("batch_size", &XpuDecoderConfig::batch_size,
+                       "Batch size. Surface synchronization is called once per batch")
+        .def_readwrite(
+            "async_depth", &XpuDecoderConfig::async_depth,
+            "Asynchronous decoding depth in number of frames, where 0 means synchronous decoding")
+        .def_readwrite("ff_preproc", &XpuDecoderConfig::ff_preproc,
+                       "Preprocessing using fixed functions (fuses decode & resize operation)")
+        .def_readwrite(
+            "output_original_nv12", &XpuDecoderConfig::out_orig_nv12,
+            "Return original (decoded) frame in NV12 format in addition to processed frame")
+        .def_readwrite("loop_mode", &XpuDecoderConfig::loop_mode, "Endless playing of input media")
+        .def("__repr__", [](const XpuDecoderConfig& self) {
+            return py::str("<XpuDecoderConfig out_img_size={}, pool_size={}, memory_format={}, "
+                           "batch_size={}, async_depth={}, ff_preproc={}, "
+                           "output_original_nv12={}, loop_mode={}>")
+                .format(self.out_img_size, self.pool_size, self.format, self.batch_size,
+                        self.async_depth, self.ff_preproc, self.out_orig_nv12, self.loop_mode);
+        });
+
     py::class_<XpuDecoder>(m, "XpuDecoder")
         .def(py::init<const std::string&>())
         .def(py::init<const std::string&, const std::string&>())
+        .def(py::init<const std::string&, const std::string&, XpuDecoderConfig>())
         .def("__iter__", &XpuDecoder::get_iterator)
         .def("__next__", &XpuDecoder::get_next_frame, py::return_value_policy::take_ownership)
-        .def("set_memory_format", &XpuDecoder::set_memory_format)
-        .def("set_output_resolution", &XpuDecoder::set_output_resolution)
-        .def("set_async_depth", &XpuDecoder::set_async_depth)
         .def("get_va_device", &XpuDecoder::get_va_device, py::return_value_policy::reference)
         .def("get_original_size", &XpuDecoder::get_original_size)
-        .def("set_frame_pool_params", &XpuDecoder::set_frame_pool_params)
         .def("set_loop_mode", &XpuDecoder::set_loop_mode)
-        .def("set_output_original_nv12", &XpuDecoder::set_output_original_nv12)
-        .def("set_batch_size", &XpuDecoder::set_batch_size);
+        .def_static("is_ff_preproc_supported", &XpuDecoder::is_ff_preproc_supported);
 }

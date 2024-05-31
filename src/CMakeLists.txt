@@ -17,6 +17,17 @@ if (ENABLE_PYLOGGER)
     add_compile_definitions(ENABLE_PYLOGGER)
 endif(ENABLE_PYLOGGER)
 
+option(ENABLE_PROFILING_ITT "Build with ITT tracing" OFF)
+if (ENABLE_PROFILING_ITT)
+    add_compile_definitions(ENABLE_PROFILING_ITT)
+endif(ENABLE_PROFILING_ITT)
+
+option(ENABLE_FF_PREPROC "Enables support for Fixed Function Preprocessing (FF Preproc). Requires special FFmpeg version!" OFF)
+if (ENABLE_FF_PREPROC)
+    add_compile_definitions(ENABLE_FF_PREPROC)
+    message("Fixed Function Preprocessing option is enabled")
+endif(ENABLE_FF_PREPROC)
+
 # Define the path to the custom Find modules
 set(CUSTOM_CMAKE_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 list(APPEND CMAKE_MODULE_PATH "${CUSTOM_CMAKE_MODULE_DIR}")
@@ -39,6 +50,11 @@ add_subdirectory(cpp/vaapi_helper)
 add_subdirectory(cpp/visual_ai_bind)
 add_subdirectory(cpp/xpu_decoder)
 add_subdirectory(cpp/xpu_encoder)
+
+if (ENABLE_PROFILING_ITT)
+    get_filename_component(PARENT_DIR ../ ABSOLUTE)
+    add_subdirectory(${PARENT_DIR}/external/ittapi ittapi)
+endif(ENABLE_PROFILING_ITT)
 
 # Create the shared library from object libraries
 add_library(visual_ai SHARED

@@ -24,7 +24,7 @@ except ImportError as e:
     __import_exceptions["fbnet"] = e
 
 try:
-    from .yolov5m import YOLOv5m
+    from .yolo import YOLOv5m
     MODELS_LIST["yolov5m"] = YOLOv5m
 except ImportError as e:
     __import_exceptions["yolov5m"] = e

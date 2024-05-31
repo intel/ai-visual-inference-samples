@@ -1,5 +1,6 @@
 #include "vaapi_context.hpp"
 #include "vaapi_frame.hpp"
+#include "vaapi_utils.hpp"
 #include <iostream>
 
 VASurfaceID create_va_surface(VADisplay display, uint32_t width, uint32_t height, int pixel_format,
@@ -46,6 +47,30 @@ uint32_t get_supported_va_copy_mode(VADisplay display) {
         throw std::runtime_error("vaCopy is not supported on current platform");
     return (attr.value & (1 << VA_EXEC_MODE_POWER_SAVING)) ? VA_EXEC_MODE_POWER_SAVING
                                                            : VA_EXEC_MODE_DEFAULT;
+}
+
+void copy(const VaApiFrame& src, const VaApiFrame& dst) {
+    VACopyObject dest_obj = {};
+    dest_obj.obj_type = VACopyObjectSurface;
+    dest_obj.object.surface_id = dst.desc.va_surface_id;
+    if (dest_obj.object.surface_id == VA_INVALID_SURFACE)
+        throw std::runtime_error("Destination surface ID is invalid.");
+
+    VACopyObject src_obj = {};
+    src_obj.obj_type = VACopyObjectSurface;
+    src_obj.object.surface_id = src.desc.va_surface_id;
+
+    if (src_obj.object.surface_id == VA_INVALID_SURFACE)
+        throw std::runtime_error("Source surface ID is invalid.");
+
+    VACopyOption va_copy_option = {};
+    va_copy_option.bits.va_copy_sync = VA_EXEC_ASYNC;
+    static uint32_t supported_va_copy_mode = get_supported_va_copy_mode(src.desc.va_display);
+    va_copy_option.bits.va_copy_mode = supported_va_copy_mode;
+    auto va_status = vaCopy(src.desc.va_display, &dest_obj, &src_obj, va_copy_option);
+    if (va_status != VA_STATUS_SUCCESS)
+        throw std::runtime_error("Failed to copy VaApiFrame frame with status: " +
+                                 std::to_string(va_status));
 }
 
 VaApiFrame::VaApiFrame(VADisplay va_display, uint32_t va_surface_id, uint32_t width,
@@ -104,28 +129,79 @@ std::unique_ptr<VaApiFrame> VaApiFrame::copy_from(const VaApiFrame& other) {
         create_va_surface(other.desc.va_display, nv12_copy->desc.width, nv12_copy->desc.height,
                           nv12_copy->desc.format, rt_format);
 
-    VACopyObject dest_obj = {};
-    dest_obj.obj_type = VACopyObjectSurface;
-    dest_obj.object.surface_id = nv12_copy->desc.va_surface_id;
-
-    VACopyObject src_obj = {};
-    src_obj.obj_type = VACopyObjectSurface;
-    src_obj.object.surface_id = other.desc.va_surface_id;
-
-    if (src_obj.object.surface_id == VA_INVALID_SURFACE)
-        throw std::runtime_error("Source surface ID is invalid.");
-
-    VACopyOption va_copy_option = {};
-    va_copy_option.bits.va_copy_sync = VA_EXEC_ASYNC;
-    static uint32_t supported_va_copy_mode = get_supported_va_copy_mode(other.desc.va_display);
-    va_copy_option.bits.va_copy_mode = supported_va_copy_mode;
-    auto va_status = vaCopy(other.desc.va_display, &dest_obj, &src_obj, va_copy_option);
-    if (va_status != VA_STATUS_SUCCESS)
-        throw std::runtime_error("Failed to copy VaApiFrame frame with status: " +
-                                 std::to_string(va_status));
-
+    copy(other, *nv12_copy);
     nv12_copy->owns_surface = true;
     return nv12_copy;
+}
+
+std::unique_ptr<SystemFrame> VaApiFrame::copy_to_system() {
+    if (desc.format != VA_FOURCC_RGBP)
+        throw std::runtime_error("Unsupported pixel format: " + std::to_string(desc.format));
+
+    const unsigned int rt_format = get_va_rt_format_for_fourcc(desc.format);
+
+    VASurfaceAttrib surface_attrib[3] = {};
+    surface_attrib[0].flags = VA_SURFACE_ATTRIB_SETTABLE;
+    surface_attrib[0].type = VASurfaceAttribPixelFormat;
+    surface_attrib[0].value.type = VAGenericValueTypeInteger;
+    surface_attrib[0].value.value.i = desc.format;
+
+    surface_attrib[1].flags = VA_SURFACE_ATTRIB_SETTABLE;
+    surface_attrib[1].type = VASurfaceAttribMemoryType;
+    surface_attrib[1].value.type = VAGenericValueTypeInteger;
+    surface_attrib[1].value.value.i = VA_SURFACE_ATTRIB_MEM_TYPE_USER_PTR;
+
+    surface_attrib[2].flags = VA_SURFACE_ATTRIB_SETTABLE;
+    surface_attrib[2].type = VASurfaceAttribExternalBufferDescriptor;
+    surface_attrib[2].value.type = VAGenericValueTypePointer;
+    VASurfaceAttribExternalBuffers ext_buffer{};
+    surface_attrib[2].value.value.p = &ext_buffer;
+
+    // Set up external buffer pitches and offsets
+    ext_buffer.pitches[0] = desc.width;
+    ext_buffer.offsets[0] = 0;
+    ext_buffer.offsets[1] = ext_buffer.pitches[0] * desc.height;
+    ext_buffer.pitches[1] = ext_buffer.pitches[0];
+    ext_buffer.offsets[2] = ext_buffer.pitches[0] * desc.height * 2;
+    ext_buffer.pitches[2] = ext_buffer.pitches[0];
+    ext_buffer.num_planes = 3;
+
+    // Allocate and align memory
+    const uint32_t base_addr_align = 0x1000;
+    uint32_t size = (ext_buffer.pitches[0] * desc.height) * 3; // frame size align with pitch.
+    size = (size + base_addr_align - 1) & ~(base_addr_align - 1);
+    size_t space = size + base_addr_align;
+    std::vector<uint8_t> system_memory(space);
+    void* system_memory_ptr = system_memory.data();
+    if (!std::align(base_addr_align, size, system_memory_ptr, space))
+        throw std::runtime_error("Failed to align memory.");
+
+    // Set up external buffer memory and attributes
+    ext_buffer.pixel_format = desc.format;
+    ext_buffer.width = desc.width;
+    ext_buffer.height = desc.height;
+    ext_buffer.data_size = size;
+    ext_buffer.num_buffers = 1;
+    ext_buffer.buffers = reinterpret_cast<uintptr_t*>(&system_memory_ptr);
+    ext_buffer.flags = VA_SURFACE_ATTRIB_MEM_TYPE_USER_PTR;
+
+    // Create VA surface
+    VASurfaceID va_surface_id;
+    auto va_status = vaCreateSurfaces(desc.va_display, rt_format, desc.width, desc.height,
+                                      &va_surface_id, 1, surface_attrib, 3);
+    if (va_status != VA_STATUS_SUCCESS)
+        throw std::runtime_error("vaCreateSurfaces() failed: " + std::to_string(va_status));
+
+    auto va_frame = std::make_unique<VaApiFrame>(desc.va_display, va_surface_id, desc.width,
+                                                 desc.height, desc.format, true);
+
+    copy(*this, *va_frame);
+
+    std::vector<int64_t> shape = {3, desc.height, desc.width};
+    std::vector<int64_t> strides = {ext_buffer.pitches[0] * desc.height, ext_buffer.pitches[0], 1};
+    uint64_t offset = static_cast<uint8_t*>(system_memory_ptr) - system_memory.data();
+    return std::make_unique<SystemFrame>(std::move(system_memory), std::move(shape),
+                                         std::move(strides), offset, std::move(va_frame));
 }
 
 VaApiFrame::~VaApiFrame() {

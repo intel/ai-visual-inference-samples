@@ -63,6 +63,16 @@ VaApiFrame* VaApiFrameConverter::convert(const VaApiFrame& src_frame, VARectangl
 }
 
 VaApiFrameConverter::ConvertResult VaApiFrameConverter::convert_ex(const VaApiFrame& src_frame,
+                                                                   bool allow_dyn_allocation) {
+    // Full frame
+    const VARectangle src_region = {.x = static_cast<int16_t>(0),
+                                    .y = static_cast<int16_t>(0),
+                                    .width = src_frame.desc.width,
+                                    .height = src_frame.desc.height};
+    return convert_ex(src_frame, src_region, allow_dyn_allocation);
+}
+
+VaApiFrameConverter::ConvertResult VaApiFrameConverter::convert_ex(const VaApiFrame& src_frame,
                                                                    VARectangle src_region,
                                                                    bool allow_dyn_allocation) {
     if (!initalized_)

@@ -20,6 +20,7 @@ class OvArguments(Arguments):
         precision: _PRECISION,
         labels_path=None,
         num_frames=None,
+        decode_device=None,
     ):
 
         super().__init__(
@@ -32,6 +33,8 @@ class OvArguments(Arguments):
             labels_path=labels_path,
             streams=streams,
             num_frames=num_frames,
+            inference_interval=inference_interval,
+            decode_device=decode_device,
         )
 
         self.parser.add_argument(
@@ -47,13 +50,11 @@ class OvArguments(Arguments):
         self.parser.add_argument(
             "--nireq", help="Number of inference requests", type=int, default=nireq
         )
-        self.parser.add_argument(
-            "--inference-interval",
-            default=inference_interval,
-            type=int,
-            help="Interval between inference requests. "
-            "An interval of 1 performs inference on every frame. "
-            "An interval of 2 performs inference on every other frame. "
-            "An interval of N performs inference on every Nth frame.",
-        )
+
         self.parser.add_argument("--profile", default=False, action=argparse.BooleanOptionalAction)
+        self.parser.add_argument(
+            "--media-only",
+            default=False,
+            action=argparse.BooleanOptionalAction,
+            help="Runs media only pipeline and measures performance",
+        )

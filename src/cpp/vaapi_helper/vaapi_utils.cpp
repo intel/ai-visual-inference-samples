@@ -6,7 +6,7 @@
 uint32_t memory_format_to_fourcc(MemoryFormat format) {
     if (format == MemoryFormat::pt_packed_rgba)
         return VA_FOURCC_RGBA;
-    else if (format == MemoryFormat::pt_planar_rgbp)
+    else if (format == MemoryFormat::pt_planar_rgbp || format == MemoryFormat::system_rgbp)
         return VA_FOURCC_RGBP;
     else if (format == MemoryFormat::ov_planar_nv12)
         return VA_FOURCC_NV12;

@@ -89,6 +89,8 @@ class PtPipeline:
         )
         self.__stop_condition = get_stop_condition(args)
         self.__play_in_loop = False if isinstance(self.__stop_condition, EosStopCondition) else True
+        self.__interval = self.args.inference_interval
+        self.__interval_counter = self.__interval - 1
         self._warmup()
         self.video = MultiStreamVideoReader()
         for _ in range(self.args.num_streams):
@@ -97,8 +99,14 @@ class PtPipeline:
     def set_tranform(self):
         pass
 
-    def decode(self, input):
-        return next(input).to(self._device)
+    def decode(self, input, warmup=False):
+        if warmup:
+            return next(input).to(self._device)
+        while self.__interval_counter != self.__interval:
+            tensor = next(input)
+            self.__interval_counter += 1
+        self.__interval_counter = 0
+        return tensor.to(self._device)
 
     def preprocess(self, tensor):
         tensor = tensor.float() / 255.0
@@ -123,27 +131,28 @@ class PtPipeline:
     def watermark(self, decoded_tensor, text, frame_id):
         pass
 
-    def process_outputs(self, frame_counter, decoded_tensors, outputs):
+    def process_outputs(self, frame_ids, decoded_tensors, outputs):
         pass
 
     def store_output_to_csv(self, outputs):
         pass
 
     def read_video(self):
-        video_reader = intel_visual_ai.VideoReader(self.media_path)
+        # None for output image size means no resize in decoder (i.e. return image in original video resolution)
+        out_img_size = None if self._resize_with_torch else (self._model_width, self._model_height)
+
         # The default memory format for videoReader is set as torch_contiguous_format
         # It can be changed to torch_channels_last by setting
-        # video_reader._c.set_memory_format(intel_visual_ai.XpuMemoryFormat.torch_channels_last)
-        if not self._resize_with_torch:
-            video_reader._c.set_output_resolution(self._model_width, self._model_height)
-        video_reader._c.set_loop_mode(self.__play_in_loop)
-
-        video_reader._c.set_async_depth(self.args.async_decoding_depth * self.batch_size)
-        video_reader._c.set_frame_pool_params(
-            (self.args.async_decoding_depth + 2) * self.batch_size
+        # memory_format=intel_visual_ai.XpuMemoryFormat.torch_channels_last
+        intel_visual_ai.set_video_backend_params(
+            out_img_size=out_img_size,
+            loop_mode=self.__play_in_loop,
+            batch_size=self.batch_size,
+            async_depth=self.args.async_decoding_depth * self.batch_size,
+            pool_size=(self.args.async_decoding_depth + 2) * self.batch_size,
         )
+        video_reader = intel_visual_ai.VideoReader(self.media_path)
 
-        video_reader._c.set_batch_size(self.batch_size)
         return Stream(video_reader, backend_type="pytorch")
 
     def read_video_cpu(self):
@@ -167,7 +176,7 @@ class PtPipeline:
         )
         warmup_video = MultiStreamVideoReader()
         warmup_video.add_stream(self.read_video())
-        warmup_frame = self.decode(warmup_video)
+        warmup_frame = self.decode(warmup_video, warmup=True)
         tensors = []
         tensor = self.preprocess(warmup_frame)
         for _ in range(self.batch_size):
@@ -198,6 +207,7 @@ class PtPipeline:
         ):
             while not self.__stop_condition.stopped:
                 decoded_tensors = []
+                frame_ids = []
                 while len(decoded_tensors) != self.batch_size:
                     decoded_tensor = None
                     try:
@@ -205,6 +215,7 @@ class PtPipeline:
                     except StopIteration as e:
                         break
                     decoded_tensors.append(decoded_tensor)
+                    frame_ids.append(self.video.frames_processed)
                 if not decoded_tensors:
                     break
                 batched_tensor = torch.stack(decoded_tensors)
@@ -213,7 +224,7 @@ class PtPipeline:
                 if self.args.output_csv:
                     iteration_outputs.append(outputs)
                 if self.args.watermark or self.args.log_predictions:
-                    self.process_outputs(self.video.frames_processed, decoded_tensors, outputs)
+                    self.process_outputs(frame_ids, decoded_tensors, outputs)
             self._synchronize()
             if self.args.output_csv:
                 self.store_output_to_csv(iteration_outputs)

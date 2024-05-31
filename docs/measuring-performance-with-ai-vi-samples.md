@@ -1,7 +1,7 @@
 # How to Run Intel® AI Visual Inference Samples Performance Measurements on Intel® Data Center GPU Flex Series
 
 ## 1. Install Required Software on Host machine
-* To get your system ready to run media analytics workloads with Intel® Data Center GPU Flex Series, follow the instructions [here](https://dgpu-docs.intel.com/installation-guides/ubuntu/ubuntu-jammy-dc.html)
+* Get your system ready to run media analytics workloads with Intel® Data Center GPU Flex Series, follow the instructions [here](https://dgpu-docs.intel.com/driver/installation.html#ubuntu-install-steps)
 * Install Intel® XPU Manager
   ```bash
   sudo apt install -y  xpu-smi
@@ -16,17 +16,19 @@ Build and run docker image for desired backend using [these instructions](runnin
 
 ## 3. Run Intel® AI Visual Inference Samples
 
-### Intel® Extension for PyTorch* as inference framework
+### Using Intel® Extension for PyTorch* as inference framework
 
 Navigate to the samples directory inside the docker container:
 ```bash
 cd samples/pytorch
 ```
 
-Run your desired sample using auxiliary `run_multi.sh` script as shown later in this section.
+Run your desired sample using `run_multi.sh` script as shown later in this section.
 
-Run each sample for `--n-procs` 4,6,8 on Intel® Data Center GPU Flex Series 140 and 170. `--n-procs` specifies how many process instances will be executed.
-To reach optimal performance run 8 processes. You may encounter the `PI_ERROR_OUT_OF_RESOURCES` error when running the ResNet50-v1.5 workload on Intel® Data Center GPU Flex Series 140 systems. In that case, reduce the number of processes to 6.  
+Run each sample with `--n-procs` with values 4,6, or 8 on Intel® Data Center GPU Flex Series 140 and 170. `--n-procs` specifies how many process instances will be executed.
+To reach optimal performance run 8 processes.  
+* You may encounter the `PI_ERROR_OUT_OF_RESOURCES` error when running the ResNet50-v1.5 workload on Intel® Data Center GPU Flex Series 140 systems. In that case, reduce the number of processes to 6.  
+
 By default, the duration of sample execution is selected according to each workload performance and takes around 2 minutes, if you want to change the duration you can modify the number of frames to process via `--sample-args "--num-frames <fill_here>"` option.
 
 | Name     | Precis. | Command |
@@ -34,7 +36,7 @@ By default, the duration of sample execution is selected according to each workl
 | SwinTransfomer</br>[224x224 bs=4] | FP16 | `./run_multi.sh --sample-name SwinTransformer --sample-args "--num-frames 40000" --multi-device --n-procs <fill_here>`  |
 | ResNet50-v1.5 </br>[224x224 bs=64] | INT8 | `./run_multi.sh --sample-name ResNet50 --sample-args "--num-frames 400000" --multi-device --n-procs <fill_here>`  |
 
-### OpenVINO™ Toolkit as inference framework
+### Using OpenVINO™ Toolkit as inference framework
 
 Navigate to the samples directory inside the docker container:
 ```bash
@@ -44,7 +46,7 @@ cd samples/openvino
 Run your desired sample using auxiliary `run_multi.sh` script as shown later in this section.
 
 OpenVINO™ Toolkit based samples are optimized to perform within a single process per GPU.
-So, Intel® Data Center GPU Flex Series 170 it's reccomended to use 1 process (`--n-procs 1`) and for Intel® Data Center GPU Flex Series 140 – 2 processes (`--n-procs 2`) to reach optimal throughput. 
+So, for Intel® Data Center GPU Flex Series 170 it's reccomended to use 1 process (`--n-procs 1`) and for Intel® Data Center GPU Flex Series 140 – 2 processes (`--n-procs 2`) to reach optimal throughput. 
 
 > ℹ️ When running the samples on Intel® Data Center GPU Flex Series 170 using a single process, you can omit `run_multi.sh` script and invoke sample directly by going to the sample directory and calling `python3 main.py`.
 >
@@ -59,6 +61,15 @@ So, Intel® Data Center GPU Flex Series 170 it's reccomended to use 1 process (`
 | YOLOv5m + AVC</br>[320x320 bs=64] | INT8 | `./run_multi.sh --sample-name YOLOv5m --n-procs <fill_here> --multi-device --sample-args "--input ~/ma/data/media/20230104_dog_bark_1920x1080_3mbps_30fps_ld_h264.mp4"` | 
 | SSD MobileNet</br>[300x300 bs=64] | INT8 | `./run_multi.sh --sample-name ssd_mobilenet_v1_coco --n-procs <fill_here> --multi-device` |
 
+
+### Heterogeneous pipelines using CPU & GPU
+To run heterogeneous pipelines where media processing is executed on GPU and inference on CPU please use `run_multi.py`. The tool is designed to work with multi-device GPUs and optimally configures CPU threading parameters. 
+
+| Name     | Precis. | Command |
+|----------|-----------|---------|
+| ResNet50_GPU_CPU </br>[224x224 bs=4] | INT8 | `python3 run_multi.py --backend openvino --sample-name ResNet50_GPU_CPU --num-processes <fill_here> --num-devices <fill_here> --install-requirements --use-taskset`  |
+| SSD MobileNet</br>[300x300 bs=64] | INT8 | `python3 run_multi.py --backend openvino --sample-name ssd_mobilenet_v1_coco_GPU_CPU --num-processes <fill_here> --num-devices <fill_here> --install-requirements --use-taskset` |
+| YOLOv5m_GPU_CPU</br>[320x320 bs=4] | INT8 | `python3 run_multi.py --backend openvino --sample-name YOLOv5m_GPU_CPU --num-processes <fill_here> --num-devices <fill_here> --install-requirements --use-taskset`  |
 
 ## Profiling
 Profiling can be done using Intel® XPU Manager for any workloads one for each run. To get more information about available metrics see [Intel® XPU Manager](https://github.com/intel/xpumanager/blob/master/doc/smi_user_guide.md)
@@ -86,3 +97,11 @@ The media engine and compute engine utilization can change depending on batch si
 
 ## Specific of running workloads on Intel® Data Center GPU Flex Series 140
 This card has 2 GPUs onboard and requires to use of both of them to show the best performance. This is why `run_multi.sh` script has option `--multi-device` to split loading and running half of processes on each GPU. It is default parameter and doesn't impact execution on Intel® Data Center GPU Flex Series 170.
+
+## Specific of running GPU plus CPU workloads
+To optimize and balance loading it is possible to execute media analytics workloads using host Intel® Xeon® CPU for AI inference. It may give additional performance gains for platform configurations with 4th/5th Gen Intel® Xeon® Scalable Processors and Intel® Data Center GPU Flex Series 140. You need to use both GPUs with the help of `--num-devices 2` option for `run_multi.sh` script. For the platform with one GPU card the optimal command lines:
+| Name     | Precis. | Command |
+|----------|-----------|---------|
+| ResNet50_GPU_CPU </br>[224x224 bs=4] | INT8 | `python3 run_multi.py --backend openvino --sample-name ResNet50_GPU_CPU --num-processes 2 --num-devices 2 --install-requirements --use-taskset`  |
+| SSD MobileNet_GPU_CPU </br>[300x300 bs=64] | INT8 | `python3 run_multi.py --backend openvino --sample-name ssd_mobilenet_v1_coco_GPU_CPU --num-processes 2 --num-devices 2 --install-requirements --use-taskset` |
+| YOLOv5m_GPU_CPU</br>[320x320 bs=4] | INT8 | `python3 run_multi.py --backend openvino --sample-name YOLOv5m_GPU_CPU --num-processes 2 --num-devices 2 --install-requirements --use-taskset`  |

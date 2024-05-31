@@ -33,14 +33,14 @@ class MediaDataLoader:
         self.logger.info(f"MediaDataLoader initialized for {video_path}")
 
     def _create_video_reader(self):
-        video_reader = intel_visual_ai.VideoReader(
-            self.video_path, output_original_nv12=self.output_original_nv12
+        intel_visual_ai.set_video_backend_params(
+            out_img_size=self.output_resolution,
+            loop_mode=self.loop_mode,
+            batch_size=self.batch_size,
+            pool_size=self.batch_size * 2,
+            output_original_nv12=self.output_original_nv12,
         )
-        if self.output_resolution:
-            video_reader._c.set_output_resolution(*self.output_resolution)
-        video_reader._c.set_loop_mode(self.loop_mode)
-        video_reader._c.set_frame_pool_params(self.batch_size * 2)
-        video_reader._c.set_batch_size(self.batch_size)
+        video_reader = intel_visual_ai.VideoReader(self.video_path)
         return video_reader
 
     def __iter__(self):

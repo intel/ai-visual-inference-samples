@@ -5,7 +5,7 @@
 # ==============================================================================
 
 set(TARGET_NAME "vaapi_helper")
-message(INFO " Building vaapi_helper CMakeLists.txt")
+message(STATUS "Configuring vaapi_helper")
 
 find_package(VAAPIDeps)
 find_package(OpenCV REQUIRED core imgproc)

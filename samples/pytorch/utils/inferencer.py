@@ -163,8 +163,8 @@ class _AbstractModelInferencer:
     # TODO: no read-video-cuda?
     def _read_video_xpu(self):
         intel_visual_ai.set_video_backend(self.device)
+        intel_visual_ai.set_video_backend_params(loop_mode=True)
         video_reader = intel_visual_ai.VideoReader(self.media_path)
-        video_reader._c.set_loop_mode(True)
         return video_reader
 
     def _decode_gpu(self, video):

@@ -1,45 +1,40 @@
-import sys
 from pathlib import Path
 import cProfile
-import openvino as ov
+import sys
+import json
+import os
+import atexit
+from typing import List
+from intel_visual_ai.frame import Frame
+from intel_visual_ai.openvino_infer_backend import ov
 
 root_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
 sys.path.append(root_dir)
-from samples.openvino.utils.yolo_pipeline import YoloPipeline
-from samples.common.get_dirs import models_dir, media_dir, labels_dir
+from samples.common.get_dirs import media_dir, models_dir, labels_dir
+from samples.openvino.utils.ov_pipeline import OvPipeline
 from samples.openvino.utils.ov_arguments import OvArguments
-from samples.common.utils import restricted_float
 from samples.common.utils import get_stop_condition
+from samples.openvino.ssd_mobilenet_v1_coco.main import SSDMobileNetPipeline
 
 MEDIA_PATH = media_dir / "20230104_dog_bark_1920x1080_3mbps_30fps_ld_h265.mp4"
 MODEL_PRECISION = "int8"
-LABELS_PATH = labels_dir / "coco_80cl.txt"
-NIREQ = 4
-BATCH_SIZE = 64
-DEVICE = "xpu"
-INFERENCE_INTERVAL = 3
+LABELS_PATH = labels_dir / "coco_91cl_bkgr.txt"
+NIREQ = os.cpu_count()
+BATCH_SIZE = 4
+DEVICE = "cpu"
+DECODE_DEVICE = "xpu"
+INFERENCE_INTERVAL = 1
 NUM_STREAMS = 2
 THRESHOLD = 0.5
-IOU_THRESHOLD = 0.4
-SAMPLE_NAME = "yolov5m"
-MODEL_NAME = "yolov5m"
+MODEL_NAME = "ssd_mobilenet_v1_coco"
+SAMPLE_NAME = MODEL_NAME
 NUM_FRAMES = 400_000
 
 
 def preproc(model, ppp):
-    ppp.input().tensor().set_element_type(ov.Type.u8).set_layout(
-        ov.Layout("NHWC")
-    ).set_color_format(ov.preprocess.ColorFormat.NV12_TWO_PLANES, ["y", "uv"]).set_memory_type(
-        ov.runtime.properties.intel_gpu.MemoryType.surface
-    )
-    ppp.input().preprocess().convert_color(ov.preprocess.ColorFormat.RGB).convert_element_type(
-        ov.Type.f32
-    ).scale(255.0)
+    """Default PrePostProcessor steps"""
+    ppp.input().tensor().set_element_type(ov.Type.u8).set_layout(ov.Layout("NCHW"))
     ppp.input().model().set_layout(ov.Layout("NCHW"))
-
-
-class YOLOv5mPipeline(YoloPipeline):
-    pass
 
 
 def main():
@@ -49,6 +44,7 @@ def main():
         media=MEDIA_PATH,
         model=MODEL_NAME,
         device=DEVICE,
+        decode_device=DECODE_DEVICE,
         nireq=NIREQ,
         batch_size=BATCH_SIZE,
         inference_interval=INFERENCE_INTERVAL,
@@ -59,20 +55,16 @@ def main():
         num_frames=NUM_FRAMES,
         precision=MODEL_PRECISION,
     )
-    ov_args.parser.add_argument("--iou-threshold", type=restricted_float, default=IOU_THRESHOLD)
+
     args = ov_args.parse_args()
 
     stop_condition = get_stop_condition(args)
     logger = ov_args.create_logger()
 
-    pipeline = YOLOv5mPipeline.create_from_args(
-        args, stop_condition, logger, model_shape=(-1, 3, 320, 320), preproc=preproc
-    )
-
+    pipeline = SSDMobileNetPipeline.create_from_args(args, stop_condition, logger, preproc=preproc)
     if args.only_download_models:
         logger.info("Model downloaded successfully, exiting")
         return
-
     if args.profile:
         cProfile.run("pipeline.run()", sort="cumtime")
     else:

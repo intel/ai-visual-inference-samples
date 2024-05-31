@@ -9,3 +9,7 @@ if (ENABLE_PYLOGGER)
 
     target_link_libraries(${TARGET_NAME} INTERFACE pybind11::module)
 endif(ENABLE_PYLOGGER)
+
+if (ENABLE_PROFILING_ITT)
+    target_link_libraries(${TARGET_NAME} INTERFACE ittnotify)
+endif(ENABLE_PROFILING_ITT)

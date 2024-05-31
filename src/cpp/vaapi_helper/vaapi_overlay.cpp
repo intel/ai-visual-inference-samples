@@ -41,10 +41,9 @@ std::tuple<cv::Mat, cv::Rect> prepare_mat(const std::vector<OverlayBox>& boxes,
     std::vector<cv::Rect> cvboxes;
     cvboxes.reserve(boxes.size());
 
-    std::transform(boxes.begin(), boxes.end(), std::back_inserter(cvboxes),
-                   [](const OverlayBox& b) {
-                       return cv::Rect{cv::Point{b.x1, b.y1}, cv::Point{b.x2, b.y2}};
-                   });
+    std::transform(
+        boxes.begin(), boxes.end(), std::back_inserter(cvboxes),
+        [](const OverlayBox& b) { return cv::Rect{cv::Point{b.x1, b.y1}, cv::Point{b.x2, b.y2}}; });
 
     // Get texts sizes
     std::vector<cv::Size> texts_size;

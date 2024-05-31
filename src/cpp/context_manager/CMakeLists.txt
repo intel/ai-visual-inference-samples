@@ -1,5 +1,5 @@
 set(TARGET_NAME "context_manager")
-message(INFO " Building context_manager CMakeLists.txt")
+message(STATUS "Configuring context_manager")
 
 add_library(${TARGET_NAME} OBJECT context_manager.cpp context_manager.hpp)
 

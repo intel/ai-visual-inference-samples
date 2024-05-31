@@ -25,7 +25,8 @@ PYBIND11_MODULE(libvisual_ai, m) {
     py::enum_<MemoryFormat>(m, "XpuMemoryFormat")
         .value("torch_contiguous_format", MemoryFormat::pt_planar_rgbp)
         .value("torch_channels_last", MemoryFormat::pt_packed_rgba)
-        .value("openvino_planar", MemoryFormat::ov_planar_nv12);
+        .value("openvino_planar", MemoryFormat::ov_planar_nv12)
+        .value("system_rgbp", MemoryFormat::system_rgbp);
 
     // Decoder
     pybind11_submodule_videoreader(m);

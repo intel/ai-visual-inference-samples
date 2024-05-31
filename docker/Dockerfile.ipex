@@ -1,9 +1,85 @@
+# Fixed Function Preprocessing (FF Preproc)
+# This feature requires cartwheel-based FFmpeg
+# Possible values:
+#   - 0 (default): FF preproc is DISABLED
+#   - 1: FF preproc is ENABLED
+ARG FF_PREPROC=0
+
+FROM ubuntu:22.04 as ffmpeg-build-base
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --fix-missing \
+    ca-certificates curl build-essential gpg-agent software-properties-common yasm unzip wget pkg-config git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Add Intel® Graphics APT repository
+ARG INTEL_GFX_KEY_URL=https://repositories.intel.com/gpu/intel-graphics.key
+ARG INTEL_GFX_APT_REPO="deb https://repositories.intel.com/gpu/ubuntu jammy unified"
+
+RUN repo="$INTEL_GFX_APT_REPO" && \
+    if [ -n "$INTEL_GFX_KEY_URL" ]; then \
+    key=/usr/share/keyrings/intel-graphics.gpg && \
+    curl -fsSL $INTEL_GFX_KEY_URL | gpg --dearmor --output $key && \
+    repo=${repo//deb /deb [signed-by=$key] }; \
+    fi && \
+    echo "$repo" > /etc/apt/sources.list.d/intel-gpu-jammy.list
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --fix-missing \
+    libdrm-dev libva-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+#
+# Stable FFmpeg -- without FF Preproc (see above)
+#
+FROM ffmpeg-build-base as ffmpeg-ff-preproc-0
+ARG FFMPEG_VER=n6.1
+RUN curl -GOLf "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/${FFMPEG_VER}.zip" && \
+    unzip -q "${FFMPEG_VER}.zip" && \
+    rm "${FFMPEG_VER}.zip" && \
+    mv ./* ffmpeg
+
+WORKDIR /build/ffmpeg/
+
+RUN ./configure --enable-shared --enable-vaapi --enable-pic && \
+    make "-j$(nproc)" && \
+    make install DESTDIR=/build/ffmpeg/ffmpeg-install
+
+#
+# Cartwheel-based FFmpeg -- WITH FF Preproc (see above)
+#
+FROM ffmpeg-build-base as ffmpeg-ff-preproc-1
+ARG FFMPEG_VER=2024q1
+RUN git clone -b "$FFMPEG_VER" "https://github.com/intel/cartwheel-ffmpeg" --depth 1 --recurse-submodules ffmpeg
+
+WORKDIR /build/ffmpeg/ffmpeg
+
+RUN git apply ../patches/*.patch
+
+RUN ./configure --enable-shared --enable-vaapi --enable-pic && \
+    make "-j$(nproc)" && \
+    make install DESTDIR=/build/ffmpeg/ffmpeg-install
+
+# hadolint ignore=DL3006
+FROM ffmpeg-ff-preproc-${FF_PREPROC} as ffmpeg-build
+
+
 # This image is built using Intel® Extension for PyTorch*'s Dockerfile from XPU branch
 # * Intel and the Intel logo are trademarks of Intel Corporation or its subsidiaries.
 FROM intel/intel-extension-for-pytorch:2.1.10-xpu
+ARG FF_PREPROC=0
 
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+COPY --from=ffmpeg-build /build/ffmpeg/ffmpeg-install /
+RUN ldconfig
 
 # Install metrics libraries.
 # - Keys and repo config for these packages already available in the image
@@ -20,7 +96,7 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-## Install Media packages and ffmpeg
+## Install Media packages
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     libva-drm2 wayland-protocols \
@@ -36,23 +112,6 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-ARG FFMPEG_VER=n6.1
-# hadolint ignore=DL3003
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends yasm && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* && \
-    wget --progress=bar "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/${FFMPEG_VER}.zip" && \
-    unzip -d ffmpeg "${FFMPEG_VER}.zip" && \
-    cd "/ffmpeg/FFmpeg-${FFMPEG_VER}" && \
-    ./configure --enable-shared --enable-vaapi --enable-pic && \
-    make "-j$(nproc)" && \
-    make install && \
-    ldconfig && \
-    cd /root && \
-    rm -rf ffmpeg "${FFMPEG_VER}.zip"
-
-COPY ./third-party-programs.txt /opt/intel/ai-visual-inference-samples/
-
 ARG MADIR=/home/ubuntu/ma
 USER ubuntu
 RUN mkdir -p "$MADIR/install"
@@ -62,6 +121,7 @@ COPY --chown=ubuntu:ubuntu ./requirements-base.txt ./
 COPY --chown=ubuntu:ubuntu ./requirements-ipex.txt ./
 
 # Build VideoReader
+ENV VISUAL_AI_ENABLE_FF_PREPROC=${FF_PREPROC}
 RUN pip install --no-cache-dir -r ./requirements-ipex.txt
 
 COPY --chown=ubuntu:ubuntu ./setup.py ./
@@ -73,6 +133,7 @@ RUN pip install --no-cache-dir .
 WORKDIR $MADIR
 COPY --chown=ubuntu:ubuntu ./data ./data
 COPY --chown=ubuntu:ubuntu ./samples ./samples
+COPY --chown=ubuntu:ubuntu ./docker/third-party-programs-ipex.txt ./
 
 # Clean up and rights
 RUN rm -rf $MADIR/install

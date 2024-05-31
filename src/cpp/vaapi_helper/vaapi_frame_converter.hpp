@@ -36,6 +36,8 @@ class VaApiFrameConverter : public std::enable_shared_from_this<VaApiFrameConver
 
     // Extended version of convert.
     // It has option to enable dynamic VA surface allocation if case of empty pool
+    ConvertResult convert_ex(const VaApiFrame& src_frame, bool allow_dyn_allocation);
+
     ConvertResult convert_ex(const VaApiFrame& src_frame, VARectangle src_region,
                              bool allow_dyn_allocation);
 

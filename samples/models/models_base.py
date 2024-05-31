@@ -27,7 +27,7 @@ class ModelBase(ABC):
         _model_shape (tuple): The shape of the model input.
         _logger (logging.Logger): Logger instance for logging information, warnings, and errors.
     """
-    def __init__(self, model_name, model_shape, models_storage_path: Path=DEFAULT_MODELS_STORAGE_PATH, logger=None) -> None:
+    def __init__(self, model_name, model_shape, device = "cpu", models_storage_path: Path=DEFAULT_MODELS_STORAGE_PATH, logger=None) -> None:
         """
         Initializes the ModelBase instance with the specified model name, shape, storage path, and logger.
 
@@ -41,6 +41,7 @@ class ModelBase(ABC):
         self._models_storage_path: Path = models_storage_path
         self._model_name = model_name
         self._model_shape = model_shape
+        self.device = device
         self._logger = logger if logger is not None else logging.getLogger("visual_ai")
 
     def __repr__(self) -> str:
@@ -99,7 +100,7 @@ class ModelBase(ABC):
     def _load_pt_model_from_local_storage(self, storage_path: Path):
         if not storage_path.exists():
             raise FileNotFoundError(f"Model {self} path: {storage_path} is not exist")
-        return torch.jit.load(storage_path).eval()
+        return torch.jit.load(storage_path, map_location=self.device).eval()
 
     def _convert_to_ov_model(self, model, model_shape):
         self._logger.debug("Converting model to openvino format.")
@@ -143,10 +144,8 @@ class ModelBase(ABC):
         model = self._get_and_load_default_pytorch_model()
         if precision == "fp16":
             model = model.half()
-        elif precision == "int8" and quantization_backend == "nncf":
-            model = self._quantize_model_nncf(model)
-        elif precision == "int8" and quantization_backend == "ipex":
-            raise NotImplementedError(f"Precision: {precision} for pytorch with quantization backend: {quantization_backend} is not supported yet")
+        if precision == "int8":
+            model = self._quantize_model(model=model, backend=quantization_backend)
         self._save_pytorch_model(model=model, precision=precision)
         return model
 

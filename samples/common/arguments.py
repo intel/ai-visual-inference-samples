@@ -1,4 +1,6 @@
 import argparse
+import json
+import os
 from pathlib import Path
 import logging
 from samples.common.utils import restricted_float
@@ -19,9 +21,11 @@ class Arguments:
         threshold,
         output_dir,
         labels_path,
+        inference_interval=1,
         num_frames=None,
         streams=DEFAULT_NUM_STREAMS,
         warmup_iterations=DEFAULT_WARMUP_ITERATIONS,
+        decode_device=None,
     ):
         self._parser = argparse.ArgumentParser(description=sample_name)
 
@@ -34,6 +38,11 @@ class Arguments:
             help="Device to run pipeline on. Example xpu:0",
             type=str,
             default=device,
+        )
+        self._parser.add_argument(
+            "--decode-device",
+            default=decode_device,
+            help="Which decoding device to use. Aligned with inference device by default",
         )
         self.parser.add_argument(
             "--sample-name",
@@ -97,6 +106,15 @@ class Arguments:
             action=argparse.BooleanOptionalAction,
             help="Download models and exit",
         )
+        self.parser.add_argument(
+            "--inference-interval",
+            default=inference_interval,
+            type=int,
+            help="Interval between inference requests. "
+            "An interval of 1 performs inference on every frame. "
+            "An interval of 2 performs inference on every other frame. "
+            "An interval of N performs inference on every Nth frame.",
+        )
         stop_rule_group = self.parser.add_mutually_exclusive_group(required=False)
         stop_rule_group.add_argument("--duration", help="Desired stream duration in sec", type=int)
         stop_rule_group.add_argument(
@@ -117,6 +135,11 @@ class Arguments:
         if not (Path(self._args.input).is_file()):
             raise ValueError(f"Cannot find input media {self._args.input}")
         self.validate()
+        self._args.output_dir.mkdir(parents=True, exist_ok=True)
+        with open(
+            self._args.output_dir / f"{self._args.sample_name}_args_{os.getpid()}.txt", "w"
+        ) as fp:
+            fp.write(json.dumps({k: str(v) for k, v in vars(self._args).items()}, indent=4))
         return self._args
 
     def validate(self):

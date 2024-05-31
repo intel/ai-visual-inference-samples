@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterator, Optional
 
 try:
     import intel_visual_ai.libvisual_ai.videoreader as libvideoreader
+    import intel_visual_ai.libvisual_ai as libvisualai
 except ModuleNotFoundError:
     pass
 
@@ -18,12 +19,10 @@ class VideoReader:
         stream: str = "video",
         num_threads: int = 0,
         path: Optional[str] = None,
-        output_original_nv12: bool = False,
     ) -> None:
         from . import get_video_backend
 
         self.backend = get_video_backend()
-        self.output_original_nv12 = output_original_nv12
         if isinstance(src, str):
             if src == "":
                 raise TypeError("src cannot be empty")
@@ -35,8 +34,22 @@ class VideoReader:
             # Tentatively it is fixed using the self.backend which equates to "xpu" but if there are more
             # Devices this mechanism will create two different context! This affects ContextManager!
             try:
-                self._c = libvideoreader.XpuDecoder(src, self.backend)
-                self._c.set_output_original_nv12(self.output_original_nv12)
+                from . import get_video_backend_params
+
+                backend_params = get_video_backend_params()
+            except Exception:
+                backend_params = {}
+
+            try:
+                if not backend_params:
+                    self.output_original_nv12 = False
+                    self._c = libvideoreader.XpuDecoder(src, self.backend)
+                else:
+                    cfg = libvideoreader.XpuDecoderConfig(**backend_params)
+
+                    self._c = libvideoreader.XpuDecoder(src, self.backend, cfg)
+                    self.output_original_nv12 = cfg.output_original_nv12
+
             except Exception as e:
                 raise ImportError(
                     """intel_visual_ai libvideoreader import failed. XPU decode not possible.

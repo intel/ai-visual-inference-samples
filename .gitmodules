@@ -1,3 +1,7 @@
 [submodule "external/dlpack"]
 	path = external/dlpack
 	url = https://github.com/dmlc/dlpack.git
+
+[submodule "external/ittapi"]
+	path = external/ittapi
+	url = https://github.com/intel/ittapi.git

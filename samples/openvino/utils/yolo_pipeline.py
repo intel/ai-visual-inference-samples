@@ -1,46 +1,16 @@
-from typing import List
 import numpy as np
 import torch
-from typing import Tuple
-from torchvision.transforms import v2
-from torchvision import tv_tensors
+import json
+import atexit
+from typing import Tuple, List
 from ultralytics.utils import ops
 from intel_visual_ai.frame import Frame
 from intel_visual_ai.openvino_infer_backend import ov
 from samples.openvino.utils.ov_pipeline import OvPipeline
-import json
-import os
-import atexit
+from samples.models.yolo import scale_output_boxes
 
 
-def scale_output_boxes(
-    batch_output: List[torch.Tensor],
-    scaled_tensor_size: torch.Size,
-    original_tensor_size: torch.Size,
-    format="XYXY",
-) -> List[torch.Tensor]:
-    """Scale ROI boxes received from yolov5 model to original frame size.
-    As yolov5 detection was executed on rescaled frame.
-
-    Args:
-        batch_output (List[torch.Tensor]): list of detections, on (n,6) tensor per image [xyxy, conf, cls]
-        scaled_tensor_size (torch.Size): The size of scaled tensor that was passed to yolov5 model as input
-        original_tensor_size (torch.Size): The size of original video frame tensor
-
-    Returns:
-        List[torch.Tensor]: _description_
-    """
-    transforms = v2.Resize(size=(original_tensor_size))
-    scaled_output = []
-    for output in batch_output:
-        output[:, :4] = transforms(
-            tv_tensors.BoundingBoxes(output[:, :4], format=format, canvas_size=scaled_tensor_size)
-        )
-        scaled_output.append(output.numpy())
-    return scaled_output
-
-
-class YOLOv5mPipeline(OvPipeline):
+class YoloPipeline(OvPipeline):
 
     def configure_completion_callback(self, iou_threshold=0.45, **kwargs):
         if self._print_predictions:
@@ -70,7 +40,7 @@ class YOLOv5mPipeline(OvPipeline):
             agnostic_nms (bool, *optional*, False): apply class agnostic NMS approach or not
             max_detections (int, *optional*, 300):  maximum detections after NMS
         Returns:
-        pred (List[np.ndarray]): list of detected boxes in format [x1, y1, x2, y2, score, label]
+        pred (List[torch.Tensor]): list of detected boxes in format [x1, y1, x2, y2, score, label]
         """
         nms_kwargs = {"agnostic": agnosting_nms, "max_det": max_detections}
         preds = ops.non_max_suppression(
@@ -89,7 +59,7 @@ class YOLOv5mPipeline(OvPipeline):
             nms_iou_threshold=self.iou_threshold,
         )
         for i, result in enumerate(results):
-            for *xyxy, conf, lbl in result:
+            for *xyxy, conf, lbl in result.numpy():
                 detection = {
                     "stream_id": frames[i].stream_id,
                     "frame_num": frames[i].frame_id,

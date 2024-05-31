@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 import cProfile
+import os
 import openvino as ov
 
 root_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
@@ -14,9 +15,10 @@ from samples.common.utils import get_stop_condition
 MEDIA_PATH = media_dir / "20230104_dog_bark_1920x1080_3mbps_30fps_ld_h265.mp4"
 MODEL_PRECISION = "int8"
 LABELS_PATH = labels_dir / "coco_80cl.txt"
-NIREQ = 4
-BATCH_SIZE = 64
-DEVICE = "xpu"
+NIREQ = os.cpu_count()
+BATCH_SIZE = 4
+DEVICE = "cpu"
+DECODE_DEVICE = "xpu"
 INFERENCE_INTERVAL = 3
 NUM_STREAMS = 2
 THRESHOLD = 0.5
@@ -27,19 +29,9 @@ NUM_FRAMES = 400_000
 
 
 def preproc(model, ppp):
-    ppp.input().tensor().set_element_type(ov.Type.u8).set_layout(
-        ov.Layout("NHWC")
-    ).set_color_format(ov.preprocess.ColorFormat.NV12_TWO_PLANES, ["y", "uv"]).set_memory_type(
-        ov.runtime.properties.intel_gpu.MemoryType.surface
-    )
-    ppp.input().preprocess().convert_color(ov.preprocess.ColorFormat.RGB).convert_element_type(
-        ov.Type.f32
-    ).scale(255.0)
+    ppp.input().tensor().set_element_type(ov.Type.u8).set_layout(ov.Layout("NCHW"))
+    ppp.input().preprocess().convert_element_type(ov.Type.f32).scale(255.0)
     ppp.input().model().set_layout(ov.Layout("NCHW"))
-
-
-class YOLOv5mPipeline(YoloPipeline):
-    pass
 
 
 def main():
@@ -49,6 +41,7 @@ def main():
         media=MEDIA_PATH,
         model=MODEL_NAME,
         device=DEVICE,
+        decode_device=DECODE_DEVICE,
         nireq=NIREQ,
         batch_size=BATCH_SIZE,
         inference_interval=INFERENCE_INTERVAL,
@@ -65,7 +58,7 @@ def main():
     stop_condition = get_stop_condition(args)
     logger = ov_args.create_logger()
 
-    pipeline = YOLOv5mPipeline.create_from_args(
+    pipeline = YoloPipeline.create_from_args(
         args, stop_condition, logger, model_shape=(-1, 3, 320, 320), preproc=preproc
     )
 

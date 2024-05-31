@@ -130,7 +130,7 @@ if [ $INSTALL_REQUIREMENTS == true ]; then
         pip install -r $REQUIREMENT_FILE
     fi
 fi
-rm -rf $RESULTS_DIR
+rm -rf $RESULTS_DIR/*latency*.log
 
 command="python $SAMPLE_DIR/main.py $SAMPLE_ARGS"
 

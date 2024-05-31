@@ -1,36 +1,33 @@
 from typing import List
-from intel_visual_ai.openvino_infer_backend import OpenVinoInferBackend
+from intel_visual_ai.openvino_infer_backend import _ImplGpuVaShare
 from intel_visual_ai.stream import StreamMeta
 from intel_visual_ai.frame import Frame
 
 
-class OvBackendInferenceOnly(OpenVinoInferBackend, StreamMeta):
+class InferenceOnlyWrapper(StreamMeta):
     def __init__(
         self,
-        model_name,
-        va_display,
-        nireq=1,
-        batch_size=1,
-        interval=1,
-        preproc=None,
-        model_shape=None,
-        logger=None,
+        inference_backend: _ImplGpuVaShare,
+        batch_size: int,
     ):
-        super().__init__(
-            model_name, va_display, nireq, batch_size, interval, preproc, model_shape, logger
-        )
-        self._frames_processed = 0
+        self._inference_backend = inference_backend
         self.__batch_size = batch_size
+        self._frames_processed = 0
 
     def infer(self, frame):
-        while not self._batched_request.ready:
-            self._batched_request.add_frame(frame)
-        self._batched_infer()
+        for _ in range(self.__batch_size):
+            self._inference_backend.infer(frame)
         self._frames_processed += self.__batch_size
+
+    def flush(self):
+        self._inference_backend.flush()
 
     @property
     def frames_processed(self):
         return self._frames_processed
+
+    def compile_model(self, **kwargs):
+        self._inference_backend.compile_model(**kwargs)
 
     def __next__(self):
         pass

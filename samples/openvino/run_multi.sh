@@ -139,7 +139,6 @@ rm -rf $RESULTS_DIR/*latency*.log
 command="python3 $SAMPLE_DIR/main.py $SAMPLE_ARGS"
 # Download models without laucnhing pipe on first run, to avoid multiprocess downloading
 eval "$command --only-download-model"
-
 if [ $MULTI_DEVICE == true ]; then
     #distribute processes equally on all available devices
     device_count=$(ls -1 /dev/dri/render* | wc -l)
@@ -150,7 +149,13 @@ if [ $MULTI_DEVICE == true ]; then
         if [ $device_number -ge $device_count ]; then
             device_number=0
         fi
-        multi_command="$command --device xpu:$device_number"
+        multi_command="$command"
+        if [[ $multi_command != *"--device "* ]]; then
+            multi_command="$multi_command --device xpu:$device_number"
+        fi
+        if [[ $multi_command != *"--decode-device "* ]]; then
+            multi_command="$multi_command --decode-device xpu:$device_number"
+        fi
         echo "launching process $n"
         echo $multi_command
         eval $multi_command &

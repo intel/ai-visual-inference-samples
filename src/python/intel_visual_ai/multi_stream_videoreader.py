@@ -11,20 +11,14 @@ DEFAULT_DEVICE = "xpu"
 
 
 class MultiStreamVideoReader(StreamMeta):
-    def __init__(
-        self,
-        *args,
-        backend_type: Literal["openvino", "pytorch"] = "openvino",
-        play_in_loop=False,
-        **kwrargs
-    ):
+    def __init__(self, *args, backend_type: Literal["openvino", "pytorch"] = "openvino", **kwrargs):
         self.__streams = []
         for stream in args:
             self.add_stream(stream, backend_type=backend_type, **kwrargs)
         self.__iter = None
         self.__frames_processed = 0
         self._backend_type = backend_type
-        self._play_in_loop = play_in_loop
+        self._common_params = {}
 
     def add_stream(self, stream: Union[Stream, VideoReader, str], device=None, **kwargs):
         if isinstance(stream, Stream):
@@ -32,13 +26,14 @@ class MultiStreamVideoReader(StreamMeta):
         elif isinstance(stream, VideoReader):
             self.__streams.append(Stream(stream, stream_id=len(self.__streams)))
         else:
+            params = self._common_params | kwargs
             self.__streams.append(
                 StreamFromSource(
                     stream,
-                    stream_id=len(self.__streams),
-                    device=device or DEFAULT_DEVICE,
-                    play_in_loop=self._play_in_loop,
-                    backend_type=self._backend_type,
+                    device or DEFAULT_DEVICE,
+                    len(self.__streams),
+                    self._backend_type,
+                    **params,
                 )
             )
 
@@ -86,18 +81,22 @@ class MultiStreamVideoReader(StreamMeta):
     def finished(self):
         return all([stream.finished for stream in self.__streams])
 
-    def set_output_original_frame(self, enable: bool):
-        for stream in self.__streams:
-            stream.set_output_original_frame(enable)
-
-    def configure_preproc(
-        self, output_width, output_height, pool_size, memory_format, async_depth=0
+    def set_common_stream_params(
+        self,
+        out_img_size: Resolution,
+        pool_size,
+        memory_format,
+        async_depth=0,
+        play_in_loop=False,
+        out_orig_nv12=False,
+        ff_preproc=False,
     ):
-        for stream in self.__streams:
-            stream.set_output_resolution(
-                resolution=Resolution(width=output_width, height=output_height)
-            )
-            stream.set_frame_pool_params(pool_size=pool_size)
-            # TODO MultiStreamVideoReader supports only OV backend right now
-            stream.set_memory_format(memory_format=memory_format)
-            stream.set_async_depth(async_depth=async_depth)
+        self._common_params = {
+            "out_img_size": out_img_size,
+            "pool_size": pool_size,
+            "memory_format": memory_format,
+            "async_depth": async_depth,
+            "loop_mode": play_in_loop,
+            "output_original_nv12": out_orig_nv12,
+            "ff_preproc": ff_preproc,
+        }

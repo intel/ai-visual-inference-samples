@@ -20,6 +20,7 @@ except ImportError:
 
 # This property to be aligned with https://pytorch.org/vision/main/_modules/torchvision.html
 _video_backend = "xpu"
+_video_backend_params = {}
 
 
 def set_video_backend(backend):
@@ -42,3 +43,22 @@ def get_video_backend():
         str: Name of the video backend.
     """
     return _video_backend
+
+
+def set_video_backend_params(
+    **kwargs,
+):
+    """
+    Specifies additional params used to configure decode videos backend.
+    """
+    global _video_backend_params
+    _video_backend_params = dict(**kwargs)
+
+
+def get_video_backend_params():
+    """
+    Returns current additional params used to configure decode videos backend.
+    Returns:
+        dict: kwarg dictiontary containig decode videos backend additional parameters.
+    """
+    return _video_backend_params

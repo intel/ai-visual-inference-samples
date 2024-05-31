@@ -1,5 +1,5 @@
 set(TARGET_NAME "visual_ai_bind")
-message(INFO " Building visual_ai_bind CMakeLists.txt")
+message(STATUS "Configuring visual_ai_bind")
 
 find_package(Pybind11Deps)
 

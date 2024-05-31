@@ -32,6 +32,8 @@ class CMakeBuild(build_ext):
         )
 
         cfg = "Debug" if self.debug else "Release"
+        enable_profiling_itt = os.getenv("VISUAL_AI_ENABLE_PROFILING_ITT", "False")
+        enable_ff_preproc = os.getenv("VISUAL_AI_ENABLE_FF_PREPROC", "0")
         cmake_cmd = [
             "cmake",
             "-S",
@@ -40,6 +42,8 @@ class CMakeBuild(build_ext):
             self.build_temp,
             "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=" + str(target_output_file.parent.resolve()),
             "-DCMAKE_BUILD_TYPE=" + cfg,
+            f"-DENABLE_PROFILING_ITT={enable_profiling_itt}",
+            f"-DENABLE_FF_PREPROC={enable_ff_preproc}",
         ]
 
         if os.getenv("USE_PYTHON_3_11") == "ON":
@@ -94,7 +98,7 @@ class CleanCommand(Command):
 
 setup(
     name="intel_visual_ai",
-    version="0.6.0",
+    version="0.6.1",
     package_dir={"": "src/python"},
     packages=find_packages("src/python"),
     ext_modules=[CMakeExtension("intel_visual_ai.libvisual_ai")],

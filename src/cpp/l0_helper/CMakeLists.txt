@@ -1,5 +1,5 @@
 set(TARGET_NAME "l0_helper")
-message(INFO "Building l0_helper CMakeLists.txt")
+message(STATUS "Configuring l0_helper")
 
 find_package(LevelZero)
 

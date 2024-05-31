@@ -11,4 +11,6 @@ class Frame {
     // NO COPY
     Frame(const Frame&) = delete;
     Frame& operator=(const Frame&) = delete;
+
+    virtual void sync() const {};
 };

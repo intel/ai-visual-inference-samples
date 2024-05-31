@@ -75,10 +75,10 @@ class ImageNetPipeline(PtPipeline):
         image_name = os.path.join(self.args.output_dir, f"{self.model_name}_output_{frame_id}.png")
         image_pil.save(image_name)
 
-    def process_outputs(self, frame_counter, decoded_tensors, outputs):
+    def process_outputs(self, frame_ids, decoded_tensors, outputs):
         for i, decoded_tensor in enumerate(decoded_tensors):
             label_id = torch.argmax(outputs[i])
-            frame_id = frame_counter - self.batch_size + i
+            frame_id = frame_ids[i]
             label = " ".join(self.labels[label_id])
             text = f"Predicted Index: {label_id}, Class: {label}"
             if self.args.log_predictions:

@@ -1,5 +1,5 @@
 set(TARGET_NAME "xpuencoder")
-message(INFO " Building XPUEncoder CMakeLists.txt")
+message(STATUS "Configuring XPUEncoder")
 
 find_package(PythonDeps)
 find_package(Pybind11Deps)

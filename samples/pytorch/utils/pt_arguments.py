@@ -20,6 +20,7 @@ class PtArguments(Arguments):
         threshold=0.5,
         media=DEFAULT_MEDIA_FILE,
         num_frames=None,
+        inference_interval=1,
     ):
 
         super().__init__(
@@ -31,6 +32,8 @@ class PtArguments(Arguments):
             output_dir=output_dir,
             labels_path=labels_path,
             num_frames=num_frames,
+            inference_interval=inference_interval,
+            decode_device=decode_device,
         )
         self._parser.add_argument(
             "--watermark",
@@ -63,11 +66,6 @@ class PtArguments(Arguments):
             default=True,
             action=argparse.BooleanOptionalAction,
             help="Normalize tensors using mean and std",
-        )
-        self._parser.add_argument(
-            "--decode-device",
-            default=decode_device,
-            help="Which decoding device to use. Aligned with inference device by default",
         )
         self._parser.add_argument(
             "--dataset-dir",
